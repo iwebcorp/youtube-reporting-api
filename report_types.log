@@ -1,0 +1,26 @@
+== 일반 채널 리포트 타입 조회 ==
+채널 리포트: 20개 발견
+ - channel_annotations_a1
+ - channel_basic_a3
+ - channel_cards_a1
+ - channel_combined_a3
+ - channel_demographics_a1
+ - channel_device_os_a3
+ - channel_end_screens_a1
+ - channel_playback_location_a3
+ - channel_province_a3
+ - channel_reach_basic_a1
+ - channel_reach_combined_a1
+ - channel_sharing_service_a1
+ - channel_subtitles_a3
+ - channel_traffic_source_a3
+ - playlist_basic_a2
+ - playlist_combined_a2
+ - playlist_device_os_a2
+ - playlist_playback_location_a2
+ - playlist_province_a2
+ - playlist_traffic_source_a2
+
+== CMS (Content Owner) 리포트 권한 확인 ==
+만약 위 목록에 'content_owner_'로 시작하는 리포트가 없다면,
+onBehalfOfContentOwner 파라미터가 반드시 필요합니다.
