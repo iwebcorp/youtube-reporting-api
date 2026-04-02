@@ -2,8 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 
 // --- 추출 설정 (여기서 원하는 기간을 정하세요) ---
-const DAYS_TO_PROCESS = 7;     // 최근 7일치만 처리하고 싶으면 7, 전체는 0으로 설정
-const DATE_FILTER = "";       // 특정 월만 보고 싶다면 "2026-03" 입력 (값이 있으면 DAYS_TO_PROCESS보다 우선함)
+const START_DATE = "2026-01-13"; // 시작일 (YYYY-MM-DD)
+const END_DATE = "2026-02-27";   // 종료일 (YYYY-MM-DD)
+const DATE_FILTER = "";          // 특정 문구 필터 (예: "2026-03"), 값이 있으면 위 날짜 범위보다 우선함
 
 const reportDir = path.join(process.cwd(), "reports");
 const allFiles = fs.existsSync(reportDir) ? fs.readdirSync(reportDir).filter(f => f.endsWith(".csv")) : [];
@@ -13,17 +14,21 @@ let files = allFiles;
 if (DATE_FILTER) {
   files = allFiles.filter(f => f.includes(DATE_FILTER));
   console.log(`\n[필터 적용] "${DATE_FILTER}" 문구가 포함된 리포트만 처리합니다. (총 ${files.length}개)`);
-} else if (DAYS_TO_PROCESS > 0) {
-  const now = new Date();
+} else if (START_DATE && END_DATE) {
+  const start = new Date(START_DATE);
+  const end = new Date(END_DATE);
+  
+  // 날짜 비교를 위해 시간 제거 (00:00:00 기준)
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+
   files = allFiles.filter(f => {
     const match = f.match(/report_(\d{4}-\d{2}-\d{2})/);
     if (!match || !match[1]) return false;
-    const dateStr = match[1];
-    const fileDate = new Date(dateStr);
-    const diffDays = Math.floor((now.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24));
-    return diffDays >= 0 && diffDays < DAYS_TO_PROCESS;
+    const fileDate = new Date(match[1]);
+    return fileDate >= start && fileDate <= end;
   });
-  console.log(`\n[기간 설정] 최근 ${DAYS_TO_PROCESS}일 이내의 리포트만 처리합니다. (총 ${files.length}개)`);
+  console.log(`\n[기간 설정] ${START_DATE} ~ ${END_DATE} 범위의 리포트만 처리합니다. (총 ${files.length}개)`);
 } else {
   console.log(`\n[전체 처리] 모든 리포트 파일을 처리합니다. (총 ${files.length}개)`);
 }
@@ -71,7 +76,7 @@ async function generateMonthlyExports() {
   ws3.write("\uFEFFAdjustment Type,Month,Country,Asset ID,Asset Title,Asset Labels,Asset Type,Custom ID,ISRC,UPC,GRID,Artist,Album,Label,Claim Type,Content Type,Offer,Owned Views,Monetized Views : Audio,Monetized Views : Audio Visual,Monetized Views,YouTube Revenue Split,Partner Revenue : Pro Rata : Audio,Partner Revenue : Pro Rata : Audio Visual,Partner Revenue : Pro Rata,Partner Revenue : Per Sub Min,Partner Revenue\n");
   ws4.write("\uFEFFAdjustment Type,Date,Country,Video ID,Asset ID,Asset Title,Asset Labels,Custom ID,ISRC,Upc,Grid,Artist,Album,Label,Owned Views,YouTube Revenue Split,Partner Revenue Pro Rata,Partner Revenue Per Play Min,Partner Revenue\n");
 
-  const processLabel = DATE_FILTER ? `${DATE_FILTER} 기간` : (DAYS_TO_PROCESS > 0 ? `최근 ${DAYS_TO_PROCESS}일치` : "전체");
+  const processLabel = DATE_FILTER ? `${DATE_FILTER} 기간` : (START_DATE && END_DATE ? `${START_DATE} ~ ${END_DATE} 기간` : "전체");
   console.log(`총 ${files.length}개의 리포트(${processLabel} 데이터)를 처리합니다... 시간이 다소 소요될 수 있습니다.`);
 
   // Subscription (3번)은 월별 집계이므로 메모리에 우선 자산별로 합산합니다.

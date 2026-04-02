@@ -31,56 +31,55 @@ npm install
 ### A. 인증 (Initial Auth)
 처음 실행하거나 권한이 변경되었을 때 실행합니다.
 ```bash
-npm start
-# 또는 
 npx tsx src/reAuth.ts
 ```
 
-### B. CMS ID 찾기 (Content Owner 전용)
-CMS 리포트에 접근하기 위해서는 `onBehalfOfContentOwner` 파라미터에 들어갈 ID가 필요합니다.
+### B. 8개 리포트 작업(Job) 등록하기
+리포트가 생성되려면 먼저 YouTube에 해당 리포트 타입을 "구독(Job 생성)"해야 합니다.
 ```bash
-npx tsx src/findCmsId.ts
+npx tsx src/createJob.ts
 ```
-조회된 ID를 복사하여 `src/createJob.ts` 및 `src/getReports.ts`의 `onBehalfOfContentOwner` 값으로 설정하세요.
+*※ 팁: 8가지 종류의 리포트가 필요하다면 `src/createJob.ts`에서 각 `reportTypeId`를 변경하며 실행하세요.*
 
-### C. 가용한 리포트 확인 (진단 도구)
-현재 계정으로 어떤 리포트를 생성할 수 있는지 확인합니다.
-```bash
-npx tsx src/listReportTypes.ts
-```
-상세 내용은 `report_types.log` 또는 `report_types_cms.log`에서 확인할 수 있습니다.
+### C. 리포트 한 번에 다운로드 (날짜 지정 포함)
+등록된 모든 Job의 리포트 데이터를 한꺼번에 다운로드합니다. 
+특히 **"과거 특정 기간(예: 1/13~2/27)"**의 데이터만 받고 싶을 때 유용합니다.
 
-### D. 리포팅 작업 생성
-```bash
-npm run create-job
-```
+1. `src/getReports.ts` 파일을 엽니다.
+2. 상단 설정값을 원하는 기간으로 수정합니다:
+   ```typescript
+   const START_DATE = "2026-01-13"; // 시작일
+   const END_DATE = "2026-02-27";   // 종료일
+   ```
+3. 다음 명령어를 실행합니다:
+   ```bash
+   npm run get-reports
+   # 또는 npx tsx src/getReports.ts
+   ```
+   *※ 오늘이 3/26이더라도, 위 날짜를 "2026-01-13"~"2026-02-27"로 설정하면 해당 기간의 리포트만 `reports/` 폴더에 차곡차곡 저장됩니다.*
 
-### E. 리포트 목록 및 다운로드
-```bash
-npm run get-reports
-```
+### D. 클라이언트 제출용 CSV 추출 (최종 결과물 4종)
+다운로드된 원본 리포트들(`reports/` 폴더 내 파일)을 가공하여 클라이언트가 요구하는 4가지 형식의 CSV로 변환합니다.
 
-### F. 리포트 분석
-다운로드한 데이터를 기반으로 통계를 확인합니다.
-```bash
-npm run analyze-reports
-```
+1. `src/extractCsvs.ts` 파일을 엽니다.
+2. 분석할 데이터 기간을 설정합니다:
+   ```typescript
+   const START_DATE = "2026-01-13"; // 시작일
+   const END_DATE = "2026-02-27";   // 종료일
+   ```
+3. 실행하여 결과물을 생성합니다:
+   ```bash
+   npx tsx src/extractCsvs.ts
+   ```
+   *※ 실행 결과로 `1_neighboring_daily_ad`, `2_neighboring_daily_ad_alt`, `3_neighboring_monthly_sub`, `4_neighboring_daily_video` 파일이 생성됩니다.*
 
-## 📂 프로젝트 구조
+## 📂 프로젝트 주요 파일 안내
 
-```text
-src/
-├── auth.ts           # OAuth 2.0 인증 로직
-├── reAuth.ts         # 토큰 초기화 및 재인증
-├── findCmsId.ts      # CMS ID(Content Owner) 조회
-├── listReportTypes.ts # 가용한 리포트 종류 확인
-├── createJob.ts      # 리포팅 작업 생성
-├── getReports.ts     # 생성된 리포트 조회 및 다운로드
-├── analyzeReports.ts # 리포트 데이터 분석 및 요약
-└── index.ts          # 메인 진입점
-```
+- `src/getReports.ts`: 모든 Job의 리포트를 기간별로 필터링하여 **다운로드**하는 핵심 도구.
+- `src/extractCsvs.ts`: 다운로드된 원본 데이터를 **클라이언트 양식(CSV 4종)으로 가공**하는 도구.
+- `reports/`: YouTube에서 직접 내려받은 원본 CSV 리포트들이 보관되는 폴더.
 
-## ⚠️ 주의사항
-- `credentials.json`과 `token.json`은 보안에 민감한 파일이므로 절대 공개 저장소에 올리지 마세요. (`.gitignore` 확인 필수)
-- 리포트 작업(Job)을 생성한 후 실제 데이터가 쌓이기까지는 최대 48시간이 소요될 수 있습니다.
-- CMS 리포트는 반드시 해당 채널이 속한 CMS 계정의 관리자 권한이 필요합니다.
+## ⚠️ 날짜 지정 팁 (Q&A)
+
+**Q. 오늘이 3/26인데, 1/13~2/27 기간의 데이터를 받고 싶어요.**
+- **A.** `src/getReports.ts`와 `src/extractCsvs.ts` 상단의 `START_DATE`를 `"2026-01-13"`, `END_DATE`를 `"2026-02-27"`로 설정하고 실행하세요. 코드가 파일명이나 리포트 시작 시간(startTime)을 읽어서 해당 범위에 속하는 데이터만 처리하도록 설계되어 있습니다.
