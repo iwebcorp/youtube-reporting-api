@@ -32,3 +32,9 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+reports/
+
+# [추가] 데이터 파일 (용량 방지)
+*.csv
+*.txt

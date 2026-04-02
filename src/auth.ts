@@ -11,6 +11,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/yt-analytics.readonly",
   "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
   "https://www.googleapis.com/auth/youtubepartner",
+  "https://www.googleapis.com/auth/youtube.readonly",
 ];
 
 async function getAuthClient(): Promise<OAuth2Client> {
@@ -42,6 +43,8 @@ async function authorizeNewToken(
   });
 
   console.log("브라우저에서 아래 URL을 열어주세요:\n", authUrl);
+  fs.writeFileSync("auth_url.txt", authUrl);
+  console.log("URL이 auth_url.txt 파일에도 저장되었습니다.");
 
   const code = await waitForCode();
   const { tokens } = await oauth2Client.getToken(code);

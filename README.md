@@ -9,6 +9,7 @@
 - **리포트 타입 확인**: 사용 가능한 리포트 종류(`content_owner_`, `channel_`) 목록 확인 및 로그 기록
 - **작업(Job) 생성**: 특정 리포트 타입에 대한 정기적인 리포팅 작업 생성
 - **리포트 다운로드**: 생성된 리포트 목록 조회 및 실제 데이터 다운로드
+- **리포트 분석**: 다운로드된 CSV 리포트를 분석하여 날짜별/채널별/자산별 수입 합계 및 분석 결과 제공
 
 ## 🛠️ 설치 및 설정
 
@@ -59,6 +60,12 @@ npm run create-job
 npm run get-reports
 ```
 
+### F. 리포트 분석
+다운로드한 데이터를 기반으로 통계를 확인합니다.
+```bash
+npm run analyze-reports
+```
+
 ## 📂 프로젝트 구조
 
 ```text
@@ -69,6 +76,7 @@ src/
 ├── listReportTypes.ts # 가용한 리포트 종류 확인
 ├── createJob.ts      # 리포팅 작업 생성
 ├── getReports.ts     # 생성된 리포트 조회 및 다운로드
+├── analyzeReports.ts # 리포트 데이터 분석 및 요약
 └── index.ts          # 메인 진입점
 ```
 

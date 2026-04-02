@@ -7,7 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsx src/index.ts",
     "create-job": "tsx src/createJob.ts",
-    "get-reports": "tsx src/getReports.ts"
+    "get-reports": "tsx src/getReports.ts",
+    "analyze-reports": "tsx src/analyzeReports.ts",
+    "extract-csv": "tsx src/extractCsvs.ts",
+    "extract-pub": "tsx src/extractPublishingCsvs.ts"
   },
   "keywords": [],
   "author": "",
