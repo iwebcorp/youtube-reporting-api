@@ -58,25 +58,24 @@ npx tsx src/createJob.ts
    ```
    *※ 오늘이 3/26이더라도, 위 날짜를 "2026-01-13"~"2026-02-27"로 설정하면 해당 기간의 리포트만 `reports/` 폴더에 차곡차곡 저장됩니다.*
 
-### D. 클라이언트 제출용 CSV 추출 (최종 결과물 4종)
-다운로드된 원본 리포트들(`reports/` 폴더 내 파일)을 가공하여 클라이언트가 요구하는 4가지 형식의 CSV로 변환합니다.
+### D. 클라이언트 제출용 CSV 추출 (최종 결과물 8종)
+다운로드된 원본 리포트들(`reports/` 폴더 내 파일)을 가공하여 클라이언트가 요구하는 형식의 CSV로 변환합니다.
 
-1. `src/extractCsvs.ts` 파일을 엽니다.
-2. 분석할 데이터 기간을 설정합니다:
-   ```typescript
-   const START_DATE = "2026-01-13"; // 시작일
-   const END_DATE = "2026-02-27";   // 종료일
-   ```
-3. 실행하여 결과물을 생성합니다:
-   ```bash
-   npx tsx src/extractCsvs.ts
-   ```
-   *※ 실행 결과로 `1_neighboring_daily_ad`, `2_neighboring_daily_ad_alt`, `3_neighboring_monthly_sub`, `4_neighboring_daily_video` 파일이 생성됩니다.*
+#### 1) 인접저작권용 (Neighboring - 4종)
+1. `src/extractCsvs.ts` 파일을 열어 `START_DATE`, `END_DATE`를 설정합니다.
+2. 실행: `npx tsx src/extractCsvs.ts`
+   - 생성 파일: `1_neighboring_daily_ad.csv`, `2_neighboring_daily_ad_alt.csv`, `3_neighboring_monthly_sub.csv`, `4_neighboring_daily_video.csv`
+
+#### 2) 퍼블리싱용 (Publishing - 4종)
+1. `src/extractPublishingCsvs.ts` 파일을 열어 `START_DATE`, `END_DATE`를 설정합니다.
+2. 실행: `npx tsx src/extractPublishingCsvs.ts`
+   - 생성 파일: `1_publishing_daily_ad.csv`, `2_publishing_daily_ad_alt.csv`, `3_publishing_monthly_sub.csv`, `4_publishing_ddex_dsr.txt` (DDEX 저작권 포맷 포함)
 
 ## 📂 프로젝트 주요 파일 안내
 
 - `src/getReports.ts`: 모든 Job의 리포트를 기간별로 필터링하여 **다운로드**하는 핵심 도구.
-- `src/extractCsvs.ts`: 다운로드된 원본 데이터를 **클라이언트 양식(CSV 4종)으로 가공**하는 도구.
+- `src/extractCsvs.ts`: **인접저작권(Neighboring)** 정산 데이터를 가공하는 도구.
+- `src/extractPublishingCsvs.ts`: **퍼블리싱(Publishing)** 정산 및 저작권 데이터를 가공하는 도구.
 - `reports/`: YouTube에서 직접 내려받은 원본 CSV 리포트들이 보관되는 폴더.
 
 ## ⚠️ 날짜 지정 팁 (Q&A)

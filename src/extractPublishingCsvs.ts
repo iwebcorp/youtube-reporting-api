@@ -1,12 +1,39 @@
 import * as fs from "fs";
 import * as path from "path";
 
-// 1. 읽어들일 리포트 데이터 경로 (기존 reports 폴더)
+// --- 추출 설정 (여기서 원하는 기간을 정하세요) ---
+const START_DATE = "2026-01-13"; // 시작일 (YYYY-MM-DD)
+const END_DATE = "2026-02-27";   // 종료일 (YYYY-MM-DD)
+const DATE_FILTER = "";          // 특정 문구 필터 (예: "2026-03"), 값이 있으면 위 날짜 범위보다 우선함
+
 const reportDir = path.join(process.cwd(), "reports");
-const files = fs.existsSync(reportDir) ? fs.readdirSync(reportDir).filter(f => f.endsWith(".csv")) : [];
+const allFiles = fs.existsSync(reportDir) ? fs.readdirSync(reportDir).filter(f => f.endsWith(".csv")) : [];
+
+// 설정된 값에 따라 파일 필터링
+let files = allFiles;
+if (DATE_FILTER) {
+  files = allFiles.filter(f => f.includes(DATE_FILTER));
+  console.log(`\n[필터 적용] "${DATE_FILTER}" 문구가 포함된 리포트만 처리합니다. (총 ${files.length}개)`);
+} else if (START_DATE && END_DATE) {
+  const start = new Date(START_DATE);
+  const end = new Date(END_DATE);
+  
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+
+  files = allFiles.filter(f => {
+    const match = f.match(/report_(\d{4}-\d{2}-\d{2})/);
+    if (!match || !match[1]) return false;
+    const fileDate = new Date(match[1]);
+    return fileDate >= start && fileDate <= end;
+  });
+  console.log(`\n[기간 설정] ${START_DATE} ~ ${END_DATE} 범위의 리포트만 처리합니다. (총 ${files.length}개)`);
+} else {
+  console.log(`\n[전체 처리] 모든 리포트 파일을 처리합니다. (총 ${files.length}개)`);
+}
 
 if (files.length === 0) {
-  console.log("리포트 파일이 없습니다.");
+  console.log("조건에 맞는 리포트 파일이 없습니다. 설정을 확인해 주세요.");
   process.exit(1);
 }
 
@@ -61,7 +88,8 @@ async function generatePublishingExports() {
   // 4번 저작 (DDEX DSR 포맷 - Flat File)
   ws4.write("HEAD\tdsrf/1.2/1.2/1.1\tUgcProfileSRB\t1.2\t12471339\t2026-02-04T22:22:26Z\t1\t1\t2026-03-01\t2026-03-31\tPADPIDA2013020802I\tYouTube\tUsage-HardwareAudioTier-Combined-All\tkwangsoomedia-pla\tkwangsoomedia_pla\t\n");
   
-  console.log(`총 ${files.length}개의 리포트(한달치)에서 퍼블리싱 저작권 관련 CSV 추출을 시작합니다...`);
+  const processLabel = DATE_FILTER ? `${DATE_FILTER} 기간` : (START_DATE && END_DATE ? `${START_DATE} ~ ${END_DATE} 기간` : "전체");
+  console.log(`총 ${files.length}개의 리포트(${processLabel})에서 퍼블리싱 저작권 관련 CSV 추출을 시작합니다...`);
 
   const monthlySubData = new Map<string, { views: number, revenue: number, country: string }>();
   let srRecordCount = 1; // DDEX SR 레코드 카운터
@@ -118,8 +146,12 @@ async function generatePublishingExports() {
       const assetId = key.split("_")[0];
       const meta = getPubMockMeta(assetId);
       
+      const firstFile = files[0] || "";
+      const dateMatch = firstFile.match(/report_(\d{4})-(\d{2})/);
+      const displayMonth = dateMatch ? `${dateMatch[1]}${dateMatch[2]}` : "202601";
+      
       // 3번 쓰기
-      ws3.write(`Regular,202603,${data.country},${assetId},"${meta.title}","",,${meta.isrc},${meta.iswc},${meta.hfa},"${meta.writers}",${meta.rightType},${meta.ownership},Verified,Standard,Default,${data.views},${data.views},0,${data.views},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)}\n`);
+      ws3.write(`Regular,${displayMonth},${data.country},${assetId},"${meta.title}","",,${meta.isrc},${meta.iswc},${meta.hfa},"${meta.writers}",${meta.rightType},${meta.ownership},Verified,Standard,Default,${data.views},${data.views},0,${data.views},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)}\n`);
       
       // 4번: DDEX SR02 레코드 모킹 (Summary record)
       if (Math.random() < 0.05) { // 아주 일부만 추출하여 2MB 사이즈 모방
