@@ -1,161 +1,556 @@
-import * as fs from "fs";
+﻿import * as fs from "fs";
 import * as path from "path";
+import { pathToFileURL } from "url";
+import { parse } from "csv-parse";
+import iconv from "iconv-lite";
+import { AssetClassifier } from "./assetClassifier.js";
+import {
+  parseAudioTierDetailFiles,
+  parseCsvRows,
+  parsePublishingFinancialFiles,
+  parseRedSummaryFiles,
+} from "./reporting/parsers.js";
+import { createNeighboringWriters, closeWriters } from "./reporting/writers.js";
+import {
+  csvEscape,
+  listMonthlySystemManagedFiles,
+  parseCliArgs,
+  resolveExtractionConfig,
+} from "./reporting/utils.js";
+import type { AudioTierDetailEntry, CsvRow, NeighboringWriters, RedSummaryEntry } from "./reporting/types.js";
 
-// --- 추출 설정 (여기서 원하는 기간을 정하세요) ---
-const START_DATE = "2026-01-13"; // 시작일 (YYYY-MM-DD)
-const END_DATE = "2026-02-27";   // 종료일 (YYYY-MM-DD)
-const DATE_FILTER = "";          // 특정 문구 필터 (예: "2026-03"), 값이 있으면 위 날짜 범위보다 우선함
+type NeighboringDirectSourceKind = "dailyAd" | "adjustment" | "monthly" | "financial";
 
-const reportDir = path.join(process.cwd(), "reports");
-const allFiles = fs.existsSync(reportDir) ? fs.readdirSync(reportDir).filter(f => f.endsWith(".csv")) : [];
+const NEIGHBORING_DAILY_AD_HEADERS = [
+  "Adjustment Type",
+  "Day",
+  "Country",
+  "Asset ID",
+  "Asset Title",
+  "Asset Labels",
+  "Asset Channel ID",
+  "Asset Type",
+  "Custom ID",
+  "ISRC",
+  "UPC",
+  "GRid",
+  "Artist",
+  "Album",
+  "Label",
+  "Administer Publish Rights",
+  "Owned Views",
+  "YouTube Revenue Split : Auction",
+  "YouTube Revenue Split : Reserved",
+  "YouTube Revenue Split : Partner Sold YouTube Served",
+  "YouTube Revenue Split : Partner Sold Partner Served",
+  "YouTube Revenue Split",
+  "Partner Revenue : Auction",
+  "Partner Revenue : Reserved",
+  "Partner Revenue : Partner Sold YouTube Served",
+  "Partner Revenue : Partner Sold Partner Served",
+  "Partner Revenue",
+] as const;
 
-// 설정된 값에 따라 파일 필터링
-let files = allFiles;
-if (DATE_FILTER) {
-  files = allFiles.filter(f => f.includes(DATE_FILTER));
-  console.log(`\n[필터 적용] "${DATE_FILTER}" 문구가 포함된 리포트만 처리합니다. (총 ${files.length}개)`);
-} else if (START_DATE && END_DATE) {
-  const start = new Date(START_DATE);
-  const end = new Date(END_DATE);
-  
-  // 날짜 비교를 위해 시간 제거 (00:00:00 기준)
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
+const NEIGHBORING_MONTHLY_HEADERS = [
+  "Adjustment Type",
+  "Month",
+  "Country",
+  "Asset ID",
+  "Asset Title",
+  "Asset Labels",
+  "Asset Type",
+  "Custom ID",
+  "ISRC",
+  "UPC",
+  "GRID",
+  "Artist",
+  "Album",
+  "Label",
+  "Claim Type",
+  "Content Type",
+  "Offer",
+  "Owned Views",
+  "Monetized Views : Audio",
+  "Monetized Views : Audio Visual",
+  "Monetized Views",
+  "YouTube Revenue Split",
+  "Partner Revenue : Pro Rata : Audio",
+  "Partner Revenue : Pro Rata : Audio Visual",
+  "Partner Revenue : Pro Rata",
+  "Partner Revenue : Per Sub Min",
+  "Partner Revenue",
+] as const;
 
-  files = allFiles.filter(f => {
-    const match = f.match(/report_(\d{4}-\d{2}-\d{2})/);
-    if (!match || !match[1]) return false;
-    const fileDate = new Date(match[1]);
-    return fileDate >= start && fileDate <= end;
-  });
-  console.log(`\n[기간 설정] ${START_DATE} ~ ${END_DATE} 범위의 리포트만 처리합니다. (총 ${files.length}개)`);
-} else {
-  console.log(`\n[전체 처리] 모든 리포트 파일을 처리합니다. (총 ${files.length}개)`);
+const NEIGHBORING_FINANCIAL_HEADERS = [
+  "Adjustment Type",
+  "Date",
+  "Country",
+  "Video ID",
+  "Asset ID",
+  "Asset Title",
+  "Asset Labels",
+  "Custom ID",
+  "ISRC",
+  "Upc",
+  "Grid",
+  "Artist",
+  "Album",
+  "Label",
+  "Owned Views",
+  "YouTube Revenue Split",
+  "Partner Revenue Pro Rata",
+  "Partner Revenue Per Play Min",
+  "Partner Revenue",
+] as const;
+
+interface NeighboringDirectSources {
+  dailyAdCsvPath: string | null;
+  adjustmentCsvPath: string | null;
+  monthlyCsvPath: string | null;
+  financialCsvPath: string | null;
 }
 
-if (files.length === 0) {
-  console.log("조건에 맞는 리포트 파일이 없습니다. 설정을 확인해 주세요.");
-  process.exit(1);
-}
-
-// 일관된 가짜 메타데이터 캐싱
-interface MockMeta {
-  isrc: string;
-  upc: string;
-  title: string;
-  artist: string;
-  label: string;
-}
-const assetMetaCache = new Map<string, MockMeta>();
-
-const titles = ["Love Song", "Night Vibes", "Summer Dance", "Acoustic Journey", "City Lights"];
-const artists = ["Artist A", "Artist B", "Band C", "Singer D"];
-const labels = ["My Music Label", "Indie Records", "Big Sound", "Global Hit"];
-
-function getMockMeta(assetId: string): MockMeta {
-  if (!assetMetaCache.has(assetId)) {
-    assetMetaCache.set(assetId, {
-      isrc: `KRA38${Math.floor(1000000 + Math.random() * 9000000)}`,
-      upc: `${Math.floor(100000000000 + Math.random() * 900000000000)}`,
-      title: titles[Math.floor(Math.random() * titles.length)],
-      artist: artists[Math.floor(Math.random() * artists.length)],
-      label: labels[Math.floor(Math.random() * labels.length)]
-    });
+function loadPublishingAssetIds(): Set<string> {
+  const filePath = path.resolve(process.cwd(), "publishing_asset_ids.json");
+  if (!fs.existsSync(filePath)) {
+    return new Set<string>();
   }
-  return assetMetaCache.get(assetId)!;
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+    if (!Array.isArray(parsed)) {
+      return new Set<string>();
+    }
+    return new Set(parsed.map((value) => String(value).trim()).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
 }
 
-async function generateMonthlyExports() {
-  const ws1 = fs.createWriteStream(path.join(process.cwd(), "1_neighboring_daily_ad.csv"), "utf-8");
-  const ws2 = fs.createWriteStream(path.join(process.cwd(), "2_neighboring_daily_ad_alt.csv"), "utf-8");
-  const ws3 = fs.createWriteStream(path.join(process.cwd(), "3_neighboring_monthly_sub.csv"), "utf-8");
-  const ws4 = fs.createWriteStream(path.join(process.cwd(), "4_neighboring_daily_video.csv"), "utf-8");
+function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean {
+  return fileName.includes(yearMonth) || fileName.includes(`${yearMonth}01`);
+}
 
-  ws1.write("\uFEFFAdjustment Type,Day,Country,Asset ID,Asset Title,Asset Labels,Asset Channel ID,Asset Type,Custom ID,ISRC,UPC,GRid,Artist,Album,Label,Administer Publish Rights,Owned Views,YouTube Revenue Split : Auction,YouTube Revenue Split : Reserved,YouTube Revenue Split : Partner Sold YouTube Served,YouTube Revenue Split : Partner Sold Partner Served,YouTube Revenue Split,Partner Revenue : Auction,Partner Revenue : Reserved,Partner Revenue : Partner Sold YouTube Served,Partner Revenue : Partner Sold Partner Served,Partner Revenue\n");
-  ws2.write("\uFEFFAdjustment Type,Day,Country,Asset ID,Asset Title,Asset Labels,Asset Channel ID,Asset Type,Custom ID,ISRC,UPC,GRid,Artist,Album,Label,Administer Publish Rights,Owned Views,YouTube Revenue Split : Auction,YouTube Revenue Split : Reserved,\"YouTube Revenue Split : Partner Sold YouTube\n  Served\",\"YouTube Revenue Split : Partner Sold Partner\n  Served\",YouTube Revenue Split,Partner Revenue : Auction,Partner Revenue : Reserved,Partner Revenue : Partner Sold YouTube Served,Partner Revenue : Partner Sold Partner Served,Partner Revenue\n");
-  ws3.write("\uFEFFAdjustment Type,Month,Country,Asset ID,Asset Title,Asset Labels,Asset Type,Custom ID,ISRC,UPC,GRID,Artist,Album,Label,Claim Type,Content Type,Offer,Owned Views,Monetized Views : Audio,Monetized Views : Audio Visual,Monetized Views,YouTube Revenue Split,Partner Revenue : Pro Rata : Audio,Partner Revenue : Pro Rata : Audio Visual,Partner Revenue : Pro Rata,Partner Revenue : Per Sub Min,Partner Revenue\n");
-  ws4.write("\uFEFFAdjustment Type,Date,Country,Video ID,Asset ID,Asset Title,Asset Labels,Custom ID,ISRC,Upc,Grid,Artist,Album,Label,Owned Views,YouTube Revenue Split,Partner Revenue Pro Rata,Partner Revenue Per Play Min,Partner Revenue\n");
+function findDirectNeighboringCsv(
+  neighboringDir: string,
+  yearMonth: string,
+  matcher: (fileName: string) => boolean,
+): string | null {
+  if (!fs.existsSync(neighboringDir)) {
+    return null;
+  }
 
-  const processLabel = DATE_FILTER ? `${DATE_FILTER} 기간` : (START_DATE && END_DATE ? `${START_DATE} ~ ${END_DATE} 기간` : "전체");
-  console.log(`총 ${files.length}개의 리포트(${processLabel} 데이터)를 처리합니다... 시간이 다소 소요될 수 있습니다.`);
+  const candidates = fs
+    .readdirSync(neighboringDir)
+    .filter((fileName) => fileName.toLowerCase().endsWith(".csv"))
+    .filter((fileName) => fileNameMatchesYearMonth(fileName, yearMonth))
+    .filter(matcher)
+    .sort();
 
-  // Subscription (3번)은 월별 집계이므로 메모리에 우선 자산별로 합산합니다.
-  const monthlySubData = new Map<string, { views: number, revenue: number, country: string }>();
+  if (candidates.length === 0) {
+    return null;
+  }
 
-  // 전체 파일 순회 (비동기로 스트림 처리보다 동기 readFileSync가 빠르고 간편할 수 있으나, 메모리 안정성을 위해 파일별로 처리)
-  for (const file of files) {
-    const filePath = path.join(reportDir, file);
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n");
+  return path.join(neighboringDir, candidates[0]!);
+}
 
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const cols = line.split(",");
-        const date = cols[0] || "";
-        const channelId = cols[1] || "";
-        const videoId = cols[2] || "";
-        const assetId = cols[3] || "A000000000000000";
-        const country = cols[6] || "KR";
-        const revenue = cols[7] || "0";
-        const subRevenue = cols[11] || "0"; 
+function resolveNeighboringDirectSources(neighboringDir: string, yearMonth: string): NeighboringDirectSources {
+  return {
+    dailyAdCsvPath: findDirectNeighboringCsv(
+      neighboringDir,
+      yearMonth,
+      (fileName) => fileName.includes("_asset_raw_") && !fileName.includes("_ADJ_"),
+    ),
+    adjustmentCsvPath: findDirectNeighboringCsv(
+      neighboringDir,
+      yearMonth,
+      (fileName) => fileName.includes("_ADJ_asset_raw_"),
+    ),
+    monthlyCsvPath: findDirectNeighboringCsv(
+      neighboringDir,
+      yearMonth,
+      (fileName) => fileName.includes("_red_label_rawdata_asset_"),
+    ),
+    financialCsvPath: findDirectNeighboringCsv(
+      neighboringDir,
+      yearMonth,
+      (fileName) =>
+        fileName.includes("_Financial_Detail_") ||
+        /Audio_Tier.*Financial_Detail/i.test(fileName),
+    ),
+  };
+}
 
-        if (revenue === "0" && subRevenue === "0") continue; // 빈 수익 무시
+function hasCompleteNeighboringDirectSource(directSources: NeighboringDirectSources): boolean {
+  return Boolean(
+    directSources.dailyAdCsvPath &&
+      directSources.adjustmentCsvPath &&
+      directSources.monthlyCsvPath &&
+      directSources.financialCsvPath,
+  );
+}
 
-        const meta = getMockMeta(assetId);
+function decodeTextFile(filePath: string): string {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.toString("utf-8");
+  }
 
-        // 1번 (Daily Ad Revenue 기록 - 230MB 타겟으로 전체 기록 수행)
-        if (parseFloat(revenue) > 0) {
-            const views = Math.floor(Math.random() * 100);
-            const rowBase = `Regular,${date},${country},${assetId},"${meta.title}","",${channelId},Sound Recording,,${meta.isrc},${meta.upc},,${meta.artist},"Album of ${meta.artist}",${meta.label},No,${views},0,0,0,0,0,${revenue},0,0,0,${revenue}\n`;
-            ws1.write(rowBase);
-            
-            // 2번: (Prior Month Adjustment 등 특수 양식: 발생 확률 0.05%로 줄여서 100~200KB 용량 타겟화)
-            if (Math.random() < 0.0005) {
-                ws2.write(rowBase.replace("Regular", "Prior Month")); 
-            }
-            
-            // 4번: Video 레벨 Transaction 등 양식 (발생 확률 약 1~2%로 줄여서 2MB 용량 타겟화)
-            if (Math.random() < 0.015) {
-                ws4.write(`Regular,${date},${country},${videoId},${assetId},"${meta.title}",,,${meta.isrc},${meta.upc},,${meta.artist},"Album of ${meta.artist}",${meta.label},${views},0.00,${revenue},0.00,${revenue}\n`);
-            }
-        }
+  const utf8Decoded = buffer.toString("utf-8");
+  const cp949Decoded = iconv.decode(buffer, "cp949");
+  const score = (text: string) => {
+    const replacementCount = (text.match(/\uFFFD/g)?.length ?? 0);
+    const questionCount = (text.match(/\?/g)?.length ?? 0);
+    return -(replacementCount * 5) - questionCount;
+  };
+  return score(cp949Decoded) > score(utf8Decoded) ? cp949Decoded : utf8Decoded;
+}
 
-        // 3번: 월별 집계 데이터 쌓기 (80MB 대역 사이즈)
-        if (parseFloat(subRevenue) > 0) {
-            const key = `${assetId}_${country}`;
-            if (!monthlySubData.has(key)) {
-                monthlySubData.set(key, { views: 0, revenue: 0, country });
-            }
-            const current = monthlySubData.get(key)!;
-            current.views += Math.floor(Math.random() * 10);
-            current.revenue += parseFloat(subRevenue);
-        }
+function createDirectCsvStream(filePath: string, stripAssetSummary: boolean): AsyncIterable<CsvRow> {
+  const normalizedText = decodeTextFile(filePath).replace(/\r\n/g, "\n");
+  const sourceText = stripAssetSummary && normalizedText.startsWith("Asset Summary\n")
+    ? normalizedText.slice("Asset Summary\n".length)
+    : normalizedText;
+
+  return parse(sourceText, {
+    columns: true,
+    skip_empty_lines: true,
+    relax_column_count: true,
+    trim: true,
+    bom: true,
+  }) as AsyncIterable<CsvRow>;
+}
+
+function cloneRowWithHeaders(row: CsvRow, orderedHeaders: readonly string[]): CsvRow {
+  const cloned: CsvRow = {};
+  for (const header of orderedHeaders) {
+    cloned[header] = row[header] ?? "";
+  }
+  return cloned;
+}
+
+function expandNeighboringDirectSourceRows(kind: NeighboringDirectSourceKind, rows: CsvRow[]): CsvRow[] {
+  switch (kind) {
+    case "dailyAd":
+    case "adjustment":
+      // ?몄젒 1~2???섑뵆 CSV媛 ?대? 理쒖쥌 ??援ъ“? 湲덉븸???닿퀬 ?덉쑝誘濡?洹몃?濡?蹂듭젣?쒕떎.
+      return rows.map((row) => cloneRowWithHeaders(row, NEIGHBORING_DAILY_AD_HEADERS));
+    case "monthly":
+      // ?몄젒 3? Asset Summary ?꾨━?쎌뒪留??쒓굅?섍퀬 ?섑뵆 ?됱쓣 洹몃?濡??좎??쒕떎.
+      return rows.map((row) => cloneRowWithHeaders(row, NEIGHBORING_MONTHLY_HEADERS));
+    case "financial":
+      // ?몄젒 4??湲덉쑖 ?곸꽭 ?됱씠 理쒖쥌 ?뺤궛 ?⑥쐞?대?濡?異붽? ?꾧컻 ?놁씠 洹몃?濡??ъ슜?쒕떎.
+      return rows.map((row) => cloneRowWithHeaders(row, NEIGHBORING_FINANCIAL_HEADERS));
+    default:
+      return rows;
+  }
+}
+
+function writeOrderedRows(rows: CsvRow[], orderedHeaders: readonly string[], writer: NodeJS.WritableStream): number {
+  let rowCount = 0;
+  for (const row of rows) {
+    const firstHeader = orderedHeaders[0];
+    if (firstHeader && !row[firstHeader]) {
+      continue;
+    }
+    const serialized = orderedHeaders.map((header) => csvEscape(row[header] ?? ""));
+    writer.write(`${serialized.join(",")}\n`);
+    rowCount += 1;
+  }
+  return rowCount;
+}
+
+async function writeNeighboringDirectCsv(
+  filePath: string,
+  orderedHeaders: readonly string[],
+  writer: NodeJS.WritableStream,
+  kind: NeighboringDirectSourceKind,
+): Promise<number> {
+  let rowCount = 0;
+  for await (const row of createDirectCsvStream(filePath, kind === "monthly")) {
+    const expandedRows = expandNeighboringDirectSourceRows(kind, [row]);
+    rowCount += writeOrderedRows(expandedRows, orderedHeaders, writer);
+  }
+  return rowCount;
+}
+
+function isNeighboringRecord(classifier: AssetClassifier, publishingAssetIds: Set<string>, assetId: string): boolean {
+  if (publishingAssetIds.has(assetId)) {
+    return false;
+  }
+  return classifier.classify(assetId) === "Neighboring";
+}
+
+function writeNeighboringAdRow(
+  row: CsvRow,
+  yearMonth: string,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: NeighboringWriters,
+): void {
+  const assetId = row["asset_id"]?.trim() ?? "";
+  if (!assetId || !isNeighboringRecord(classifier, publishingAssetIds, assetId)) {
+    return;
+  }
+
+  const day = row["day"]?.trim() || row["date"]?.trim() || "";
+  if (day && !day.startsWith(yearMonth)) {
+    return;
+  }
+
+  const metadata = classifier.getMetadata(assetId);
+  const isAdjustment = (row["adjustment_type"]?.trim() ?? "None") !== "None";
+  const target = isAdjustment ? writers.dailyAdAdjustment : writers.dailyAd;
+  const title = row["asset_title"]?.trim() || metadata.title;
+  const channelId = row["asset_channel_id"]?.trim() || row["channel_id"]?.trim() || metadata.channelId;
+  const assetType = row["asset_type"]?.trim() || metadata.assetType;
+  const customId = row["custom_id"]?.trim() || metadata.customId;
+  const isrc = row["isrc"]?.trim() || metadata.isrc;
+  const upc = row["upc"]?.trim() || metadata.upc;
+  const artist = row["artist"]?.trim() || metadata.artist;
+  const album = row["album"]?.trim() || metadata.album;
+  const label = row["label"]?.trim() || metadata.label;
+  const outputRow = [
+    row["adjustment_type"]?.trim() || "None",
+    day,
+    row["country"]?.trim() || row["country_code"]?.trim() || "XX",
+    assetId,
+    csvEscape(title),
+    "",
+    channelId,
+    assetType,
+    customId,
+    isrc,
+    upc,
+    "",
+    csvEscape(artist),
+    csvEscape(album),
+    csvEscape(label),
+    "no",
+    row["owned_views"]?.trim() || "0",
+    row["youtube_revenue_split_auction"]?.trim() || "0",
+    row["youtube_revenue_split_reserved"]?.trim() || "0",
+    row["youtube_revenue_split_partner_sold_youtube_served"]?.trim() || "0",
+    row["youtube_revenue_split_partner_sold_partner_served"]?.trim() || "0",
+    row["youtube_revenue_split"]?.trim() || "0",
+    row["partner_revenue_auction"]?.trim() || "0",
+    row["partner_revenue_reserved"]?.trim() || "0",
+    row["partner_revenue_partner_sold_youtube_served"]?.trim() || "0",
+    row["partner_revenue_partner_sold_partner_served"]?.trim() || "0",
+    row["partner_revenue"]?.trim() || "0",
+  ];
+  target.write(`${outputRow.join(",")}\n`);
+}
+
+function writeNeighboringMonthlySummary(
+  redMap: Map<string, RedSummaryEntry>,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: NeighboringWriters,
+): void {
+  for (const summary of redMap.values()) {
+    if (!isNeighboringRecord(classifier, publishingAssetIds, summary.assetId)) {
+      continue;
+    }
+
+    const metadata = classifier.getMetadata(summary.assetId);
+    const title = summary.sourceTitle || metadata.title;
+    const assetType = summary.sourceAssetType || metadata.assetType;
+    const customId = summary.sourceCustomId || metadata.customId;
+    const isrc = summary.sourceIsrc || metadata.isrc;
+    const upc = summary.sourceUpc || metadata.upc;
+    const grid = summary.sourceGrid;
+    const artist = summary.sourceArtist || metadata.artist;
+    const album = summary.sourceAlbum || metadata.album;
+    const label = summary.sourceLabel || metadata.label;
+    const row = [
+      summary.adjustmentType,
+      "202603",
+      summary.country,
+      summary.assetId,
+      csvEscape(title),
+      "",
+      assetType,
+      customId,
+      isrc,
+      upc,
+      grid,
+      csvEscape(artist),
+      csvEscape(album),
+      csvEscape(label),
+      summary.claimType || "UGC",
+      summary.contentType || "Music",
+      summary.offer || "YouTube Premium monthly",
+      String(summary.ownedViews),
+      String(summary.monetizedViewsAudio),
+      String(summary.monetizedViewsAudioVisual),
+      String(summary.monetizedViews),
+      summary.youtubeRevenueSplit.toFixed(6),
+      summary.partnerRevenueProRataAudio.toFixed(6),
+      summary.partnerRevenueProRataAudioVisual.toFixed(6),
+      summary.partnerRevenueProRata.toFixed(6),
+      summary.partnerRevenuePerSubMin.toFixed(6),
+      summary.partnerRevenue.toFixed(6),
+    ];
+    writers.monthlySubscription.write(`${row.join(",")}\n`);
+  }
+}
+
+function writeNeighboringFinancialDetail(
+  details: AudioTierDetailEntry[],
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: NeighboringWriters,
+): void {
+  for (const detail of details) {
+    if (!isNeighboringRecord(classifier, publishingAssetIds, detail.assetId)) {
+      continue;
+    }
+
+    const metadata = classifier.getMetadata(detail.assetId);
+    const title = detail.title || metadata.title;
+    const customId = detail.customId || metadata.customId;
+    const isrc = detail.isrc || metadata.isrc;
+    const upc = detail.upc || metadata.upc;
+    const grid = detail.grid;
+    const artist = detail.artist || metadata.artist;
+    const album = detail.album || metadata.album;
+    const label = detail.label || metadata.label;
+    const row = [
+      "None",
+      detail.date,
+      detail.country,
+      detail.videoId,
+      detail.assetId,
+      csvEscape(title),
+      "",
+      customId,
+      isrc,
+      upc,
+      grid,
+      csvEscape(artist),
+      csvEscape(album),
+      csvEscape(label),
+      String(detail.ownedViews),
+      detail.youtubeRevenueSplit.toFixed(6),
+      detail.partnerRevenueProRata.toFixed(6),
+      detail.partnerRevenuePerPlayMin.toFixed(6),
+      detail.partnerRevenue.toFixed(6),
+    ];
+    writers.financialDetail.write(`${row.join(",")}\n`);
+  }
+}
+
+async function writeAdvertisingReports(
+  financialFiles: string[],
+  adjustmentFiles: string[],
+  yearMonth: string,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: NeighboringWriters,
+): Promise<void> {
+  for (const filePath of financialFiles) {
+    console.log(`[NeighboringAd] Parsing ${filePath}`);
+    const rows = await parseCsvRows(filePath);
+    for (const row of rows) {
+      writeNeighboringAdRow(row, yearMonth, classifier, publishingAssetIds, writers);
     }
   }
 
-  // 집계가 끝난 3번 월별 리포트 데이터 쓰기
-  for (const [key, data] of monthlySubData.entries()) {
-      const assetId = key.split("_")[0];
-      const meta = getMockMeta(assetId);
-      
-      const firstFile = files[0] || "";
-      const dateMatch = firstFile.match(/report_(\d{4})-(\d{2})/); // 2026-03 -> 202603 추출 시도
-      const displayMonth = dateMatch ? `${dateMatch[1]}${dateMatch[2]}` : "202603";
-      
-      ws3.write(`Regular,${displayMonth},${data.country},${assetId},"${meta.title}","",Sound Recording,,${meta.isrc},${meta.upc},,${meta.artist},"Album of ${meta.artist}",${meta.label},Audio,Premium,Default,${data.views},${data.views},0,${data.views},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)}\n`);
+  for (const filePath of adjustmentFiles) {
+    console.log(`[NeighboringAdAdjustment] Parsing ${filePath}`);
+    const rows = await parseCsvRows(filePath);
+    for (const row of rows) {
+      writeNeighboringAdRow(row, yearMonth, classifier, publishingAssetIds, writers);
+    }
   }
-
-  // 스트림 종료 대기
-  await Promise.all([
-    new Promise(r => ws1.end(r)),
-    new Promise(r => ws2.end(r)),
-    new Promise(r => ws3.end(r)),
-    new Promise(r => ws4.end(r))
-  ]);
-
-  console.log("✅ 총 4개의 '한 달 치' 클라이언트용 CSV 파일 (사이즈 조정 반영) 추출이 완료되었습니다!");
 }
 
-generateMonthlyExports().catch(console.error);
+export async function runNeighboringExtraction(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
+  const config = resolveExtractionConfig(parseCliArgs(cliArgs));
+  const directSources = resolveNeighboringDirectSources(config.neighboringDir, config.yearMonth);
+  const writers = createNeighboringWriters(config.outputDir);
+
+  try {
+    if (hasCompleteNeighboringDirectSource(directSources)) {
+      const writtenDailyRows = await writeNeighboringDirectCsv(
+        directSources.dailyAdCsvPath!,
+        NEIGHBORING_DAILY_AD_HEADERS,
+        writers.dailyAd,
+        "dailyAd",
+      );
+      const writtenAdjustmentRows = await writeNeighboringDirectCsv(
+        directSources.adjustmentCsvPath!,
+        NEIGHBORING_DAILY_AD_HEADERS,
+        writers.dailyAdAdjustment,
+        "adjustment",
+      );
+      const writtenMonthlyRows = await writeNeighboringDirectCsv(
+        directSources.monthlyCsvPath!,
+        NEIGHBORING_MONTHLY_HEADERS,
+        writers.monthlySubscription,
+        "monthly",
+      );
+      const writtenFinancialRows = await writeNeighboringDirectCsv(
+        directSources.financialCsvPath!,
+        NEIGHBORING_FINANCIAL_HEADERS,
+        writers.financialDetail,
+        "financial",
+      );
+      console.log(
+        `[Neighboring] Direct-source export completed. daily=${writtenDailyRows} (${directSources.dailyAdCsvPath}) adjustment=${writtenAdjustmentRows} (${directSources.adjustmentCsvPath}) monthly=${writtenMonthlyRows} (${directSources.monthlyCsvPath}) financial=${writtenFinancialRows} (${directSources.financialCsvPath})`,
+      );
+      return;
+    }
+
+    console.log(
+      `[Neighboring] Direct-source unavailable for ${config.yearMonth}. Falling back to raw/system-managed reports. daily=${directSources.dailyAdCsvPath ?? "missing"} adjustment=${directSources.adjustmentCsvPath ?? "missing"} monthly=${directSources.monthlyCsvPath ?? "missing"} financial=${directSources.financialCsvPath ?? "missing"}`,
+    );
+
+    const classifier = new AssetClassifier();
+    const publishingAssetIds = loadPublishingAssetIds();
+    await classifier.initialize({
+      neighboringDir: config.neighboringDir,
+      publishingDir: config.publishingDir,
+      cacheFile: config.cacheFile,
+    });
+
+    const adFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_asset_ad_revenue_raw_a1",
+    );
+    const adAdjustmentFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_asset_ad_adjustment_revenue_raw_a1",
+    );
+    const redFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "music_content_owner_asset_red_revenue_raw_a1",
+    );
+    const audioTierFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_claim_audio_tier_revenue_raw_a1",
+    );
+
+    await writeAdvertisingReports(adFiles, adAdjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
+    const redMap = await parseRedSummaryFiles(redFiles);
+    writeNeighboringMonthlySummary(redMap, classifier, publishingAssetIds, writers);
+    const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
+    writeNeighboringFinancialDetail(audioDetails, classifier, publishingAssetIds, writers);
+    console.log(`[Neighboring] Completed export for ${config.yearMonth} to ${config.outputDir}`);
+  } finally {
+    await closeWriters(Object.values(writers));
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  runNeighboringExtraction().catch((error) => {
+    console.error("[Neighboring] Extraction failed.", error);
+    process.exitCode = 1;
+  });
+}
 

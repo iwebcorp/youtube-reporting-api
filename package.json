@@ -9,16 +9,27 @@
     "create-job": "tsx src/createJob.ts",
     "get-reports": "tsx src/getReports.ts",
     "analyze-reports": "tsx src/analyzeReports.ts",
-    "extract-csv": "tsx src/extractCsvs.ts",
-    "extract-pub": "tsx src/extractPublishingCsvs.ts"
+    "extract-csv": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractCsvs.ts",
+    "extract-pub": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractPublishingCsvs.ts",
+    "extract-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractMonthlyClientPackage.ts",
+    "extract-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractShortsSongData.ts",
+    "validate-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/validateClientPackage.ts",
+    "build-metadata-cache": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/buildMetadataCache.ts",
+    "fetch-publishing-breakdown": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchPublishingBreakdown.ts",
+    "fetch-asset-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchAssetRelationships.ts",
+    "analyze-publishing-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/analyzePublishingRelationshipCorrelation.ts",
+    "select-publishing-relationship-samples": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/selectPublishingRelationshipSamples.ts",
+    "download-system-managed": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/downloadSystemManagedReports.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "csv-parse": "^6.2.1",
     "google-auth-library": "^10.6.2",
-    "googleapis": "^171.4.0"
+    "googleapis": "^171.4.0",
+    "iconv-lite": "^0.7.2"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

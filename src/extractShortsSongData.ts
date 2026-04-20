@@ -1,0 +1,151 @@
+import * as fs from "fs";
+import * as path from "path";
+import { pathToFileURL } from "url";
+import { AssetClassifier } from "./assetClassifier.js";
+import { parseCsvRows } from "./reporting/parsers.js";
+import { csvEscape, ensureDirectory, parseCliArgs, parseNumber, resolveExtractionConfig } from "./reporting/utils.js";
+
+interface AggregatedShortsRow {
+  assetId: string;
+  country: string;
+  views: number;
+  engagedViews: number;
+  watchTimeMinutes: number;
+  redViews: number;
+  redWatchTimeMinutes: number;
+  videoIds: Set<string>;
+}
+
+function listMonthlyCombinedReports(reportDir: string, yearMonth: string): string[] {
+  if (!fs.existsSync(reportDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(reportDir)
+    .filter((fileName) => fileName.endsWith("_content_owner_asset_combined_a3.csv"))
+    .filter((fileName) => fileName.startsWith(`report_${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-`))
+    .map((fileName) => path.join(reportDir, fileName))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
+  const config = resolveExtractionConfig(parseCliArgs(cliArgs));
+  const classifier = new AssetClassifier();
+  await classifier.initialize({
+    neighboringDir: config.neighboringDir,
+    publishingDir: config.publishingDir,
+    cacheFile: config.cacheFile,
+  });
+
+  const combinedFiles = listMonthlyCombinedReports(config.reportDir, config.yearMonth);
+  if (combinedFiles.length === 0) {
+    console.warn(`[Shorts] No combined reports found for ${config.yearMonth} in ${config.reportDir}`);
+    return;
+  }
+
+  const aggregated = new Map<string, AggregatedShortsRow>();
+  for (const filePath of combinedFiles) {
+    console.log(`[Shorts] Parsing ${filePath}`);
+    const rows = await parseCsvRows(filePath);
+    for (const row of rows) {
+      const assetId = row.asset_id?.trim() ?? "";
+      if (!assetId) continue;
+
+      if ((row.playback_location_type?.trim() ?? "") !== "10") {
+        continue;
+      }
+
+      const country = row.country_code?.trim() || "XX";
+      const key = `${assetId}|${country}`;
+      const entry = aggregated.get(key) ?? {
+        assetId,
+        country,
+        views: 0,
+        engagedViews: 0,
+        watchTimeMinutes: 0,
+        redViews: 0,
+        redWatchTimeMinutes: 0,
+        videoIds: new Set<string>(),
+      };
+
+      entry.views += parseNumber(row.views ?? "", `${filePath} asset=${assetId} views`);
+      entry.engagedViews += parseNumber(row.engaged_views ?? "", `${filePath} asset=${assetId} engaged_views`);
+      entry.watchTimeMinutes += parseNumber(row.watch_time_minutes ?? "", `${filePath} asset=${assetId} watch_time_minutes`);
+      entry.redViews += parseNumber(row.red_views ?? "", `${filePath} asset=${assetId} red_views`);
+      entry.redWatchTimeMinutes += parseNumber(
+        row.red_watch_time_minutes ?? "",
+        `${filePath} asset=${assetId} red_watch_time_minutes`,
+      );
+
+      const videoId = row.video_id?.trim() ?? "";
+      if (videoId) {
+        entry.videoIds.add(videoId);
+      }
+
+      aggregated.set(key, entry);
+    }
+  }
+
+  const rows = Array.from(aggregated.values()).sort((left, right) => {
+    if (left.country !== right.country) {
+      return left.country.localeCompare(right.country);
+    }
+    return right.views - left.views;
+  });
+
+  ensureDirectory(config.outputDir);
+  const outputPath = path.join(config.outputDir, `shorts_song_data_${config.yearMonth}.csv`);
+  const header = [
+    "Month",
+    "Category",
+    "Country",
+    "Asset ID",
+    "Asset Title",
+    "Custom ID",
+    "ISRC",
+    "ISWC",
+    "Writers",
+    "Shorts Views",
+    "Engaged Views",
+    "Watch Time Minutes",
+    "Red Views",
+    "Red Watch Time Minutes",
+    "Distinct Video Count",
+  ];
+
+  const lines = [header.join(",")];
+  for (const row of rows) {
+    const metadata = classifier.getMetadata(row.assetId);
+    const category = classifier.classify(row.assetId);
+    lines.push(
+      [
+        config.yearMonth,
+        csvEscape(category),
+        csvEscape(row.country),
+        csvEscape(row.assetId),
+        csvEscape(metadata.title),
+        csvEscape(metadata.customId),
+        csvEscape(metadata.isrc),
+        csvEscape(metadata.iswc),
+        csvEscape(metadata.writers),
+        row.views.toString(),
+        row.engagedViews.toString(),
+        row.watchTimeMinutes.toFixed(6),
+        row.redViews.toString(),
+        row.redWatchTimeMinutes.toFixed(6),
+        row.videoIds.size.toString(),
+      ].join(","),
+    );
+  }
+
+  fs.writeFileSync(outputPath, `${lines.join("\n")}\n`, "utf-8");
+  console.log(`[Shorts] Wrote ${outputPath}. rows=${rows.length} files=${combinedFiles.length}`);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  run().catch((error) => {
+    console.error("[Shorts] Extraction failed.", error);
+    process.exitCode = 1;
+  });
+}

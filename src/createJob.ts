@@ -1,12 +1,15 @@
 import { google } from "googleapis";
 import { getAuthClient } from "./auth.js";
+import { loadConfig } from "./configLoader.js";
+
+const cfg = loadConfig();
 
 async function createJob() {
   const auth = await getAuthClient();
   const youtubereporting = google.youtubereporting({ version: "v1", auth });
 
   const res = await youtubereporting.jobs.create({
-    onBehalfOfContentOwner: "2jFu0i9K0PE3MDrkU_UUfQ", // 콘텐츠 소유자 ID
+    onBehalfOfContentOwner: cfg.contentOwnerId,
     requestBody: {
       reportTypeId: "content_owner_asset_estimated_revenue_a1", // 수익 리포트 타입으로 수정
       name: "Asset Revenue Report Job",

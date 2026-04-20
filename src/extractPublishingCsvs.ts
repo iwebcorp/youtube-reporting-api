@@ -1,176 +1,1347 @@
 import * as fs from "fs";
 import * as path from "path";
+import { inflateRawSync } from "zlib";
+import { pathToFileURL } from "url";
+import iconv from "iconv-lite";
+import { AssetClassifier } from "./assetClassifier.js";
+import {
+  parseAudioTierDetailFiles,
+  buildPublishingUsageCacheFromReports,
+  parseCsvRows,
+  parsePublishingFinancialFiles,
+  parseRedSummaryFiles,
+} from "./reporting/parsers.js";
+import { createPublishingWriters, closeWriters } from "./reporting/writers.js";
+import {
+  csvEscape,
+  listMonthlyReportGroups,
+  listMonthlySystemManagedFiles,
+  loadPublishingUsageCache,
+  parseCliArgs,
+  resolveExtractionConfig,
+} from "./reporting/utils.js";
+import type {
+  AudioTierDetailEntry,
+  CsvRow,
+  MonthlySummaryEntry,
+  PublishingFinancialEntry,
+  PublishingUsageCacheEntry,
+  PublishingWriters,
+  RedSummaryEntry,
+} from "./reporting/types.js";
 
-// --- 추출 설정 (여기서 원하는 기간을 정하세요) ---
-const START_DATE = "2026-01-13"; // 시작일 (YYYY-MM-DD)
-const END_DATE = "2026-02-27";   // 종료일 (YYYY-MM-DD)
-const DATE_FILTER = "";          // 특정 문구 필터 (예: "2026-03"), 값이 있으면 위 날짜 범위보다 우선함
-
-const reportDir = path.join(process.cwd(), "reports");
-const allFiles = fs.existsSync(reportDir) ? fs.readdirSync(reportDir).filter(f => f.endsWith(".csv")) : [];
-
-// 설정된 값에 따라 파일 필터링
-let files = allFiles;
-if (DATE_FILTER) {
-  files = allFiles.filter(f => f.includes(DATE_FILTER));
-  console.log(`\n[필터 적용] "${DATE_FILTER}" 문구가 포함된 리포트만 처리합니다. (총 ${files.length}개)`);
-} else if (START_DATE && END_DATE) {
-  const start = new Date(START_DATE);
-  const end = new Date(END_DATE);
-  
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
-
-  files = allFiles.filter(f => {
-    const match = f.match(/report_(\d{4}-\d{2}-\d{2})/);
-    if (!match || !match[1]) return false;
-    const fileDate = new Date(match[1]);
-    return fileDate >= start && fileDate <= end;
-  });
-  console.log(`\n[기간 설정] ${START_DATE} ~ ${END_DATE} 범위의 리포트만 처리합니다. (총 ${files.length}개)`);
-} else {
-  console.log(`\n[전체 처리] 모든 리포트 파일을 처리합니다. (총 ${files.length}개)`);
+interface MonthlyAdSummary {
+  assetId: string;
+  country: string;
+  sourceTitle: string;
+  sourceCustomId: string;
+  sourceIsrc: string;
+  sourceAssetType: string;
+  adRevenue: number;
+  partnerRevenue: number;
+  views: number;
+  watchPageViews: number;
+  embeddedViews: number;
+  channelPageViews: number;
+  liveViews: number;
+  onDemandViews: number;
+  adEnabledViews: number;
+  adsenseRevenue: number;
+  doubleclickServedYouTubeSoldRevenue: number;
+  doubleclickServedPartnerSoldRevenue: number;
+  partnerServedPartnerSoldRevenue: number;
+  partnerAdsenseRevenue: number;
+  partnerDoubleclickServedYouTubeSoldRevenue: number;
+  partnerDoubleclickServedPartnerSoldRevenue: number;
+  partnerPartnerServedPartnerSoldRevenue: number;
 }
 
-if (files.length === 0) {
-  console.log("조건에 맞는 리포트 파일이 없습니다. 설정을 확인해 주세요.");
-  process.exit(1);
+type WorkbookRow = Record<string, string>;
+interface ParsedWorksheet {
+  headerRowIndex: number;
+  headerOrder: string[];
+  headers: string[];
+  rows: WorkbookRow[];
+  rawRows: Map<string, string>[];
 }
 
-// 퍼블리싱 전용 저작 관련 가짜 메타데이터 캐싱
-interface PubMockMeta {
-  iswc: string;
-  hfa: string;
-  isrc: string;
-  title: string;
-  writers: string;
-  claimType: string;
-  rightType: string;
-  ownership: string;
-}
-const pubMetaCache = new Map<string, PubMockMeta>();
+type PublishingDirectSourceKind = "dailyAd" | "adjustment" | "monthly" | "ddex";
 
-const titles = ["Love Song", "Night Vibes", "Summer Dance", "Acoustic Journey", "City Lights"];
-const writers = ["John Doe|Jane Smith", "Alex Brown", "Chris White|Sam Green", "Taylor Blue"];
-const compositionTypes = ["Mechanical", "Performance"];
-
-function getPubMockMeta(assetId: string): PubMockMeta {
-  if (!pubMetaCache.has(assetId)) {
-    pubMetaCache.set(assetId, {
-      iswc: `T-${Math.floor(100000000 + Math.random() * 900000000)}-${Math.floor(1+Math.random()*9)}`, // e.g. T-123456789-1
-      hfa: `H${Math.floor(1000000 + Math.random() * 9000000)}`,
-      isrc: `KRA38${Math.floor(1000000 + Math.random() * 9000000)}`,
-      title: titles[Math.floor(Math.random() * titles.length)],
-      writers: writers[Math.floor(Math.random() * writers.length)],
-      claimType: "Audio",
-      rightType: compositionTypes[Math.floor(Math.random() * compositionTypes.length)],
-      ownership: "100.00" // 지분율
-    });
-  }
-  return pubMetaCache.get(assetId)!;
+interface PublishingDirectSourceExpansionProfile {
+  kind: PublishingDirectSourceKind;
+  orderedHeaders: readonly string[];
 }
 
-async function generatePublishingExports() {
-  const ws1 = fs.createWriteStream(path.join(process.cwd(), "1_publishing_daily_ad.csv"), "utf-8");
-  const ws2 = fs.createWriteStream(path.join(process.cwd(), "2_publishing_daily_ad_alt.csv"), "utf-8");
-  const ws3 = fs.createWriteStream(path.join(process.cwd(), "3_publishing_monthly_sub.csv"), "utf-8");
-  const ws4 = fs.createWriteStream(path.join(process.cwd(), "4_publishing_ddex_dsr.txt"), "utf-8");
+const PUBLISHING_DAILY_AD_HEADERS = [
+  "Asset ID",
+  "Asset Labels",
+  "Custom ID",
+  "ISWC",
+  "HFA Song Code",
+  "Asset Title",
+  "Writers",
+  "Music Claim Type",
+  "Composition Right Type",
+  "Ownership Percentage",
+  "Country",
+  "Owned Views",
+  "Owned Views : Watch Page",
+  "Owned Views : Embedded Player",
+  "Owned Views : Channel Page",
+  "Owned Views : Live",
+  "Owned Views : On Demand",
+  "Owned Views : Ad-Enabled",
+  "YouTube Revenue Split : AdSense Served YouTube Sold",
+  "YouTube Revenue Split : DoubleClick Served YouTube Sold",
+  "YouTube Revenue Split : DoubleClick Served Partner Sold",
+  "YouTube Revenue Split : Partner Served Partner Sold",
+  "YouTube Revenue Split",
+  "Partner Revenue : AdSense Served YouTube Sold",
+  "Partner Revenue : DoubleClick Served YouTube Sold",
+  "Partner Revenue : DoubleClick Served Partner Sold",
+  "Partner Revenue : Partner Served Partner Sold",
+  "Partner Revenue",
+] as const;
 
-  // 1번 저작 (Publishing 1)
-  ws1.write("\uFEFFAsset ID,Asset Labels,Custom ID,ISWC,HFA Song Code,Asset Title,Writers,Music Claim Type,Composition Right Type,Ownership Percentage,Country,Owned Views,Owned Views : Watch Page,Owned Views : Embedded Player,Owned Views : Channel Page,Owned Views : Live,Owned Views : On Demand,Owned Views : Ad-Enabled,YouTube Revenue Split : AdSense Served YouTube Sold,YouTube Revenue Split : DoubleClick Served YouTube Sold,YouTube Revenue Split : DoubleClick Served Partner Sold,YouTube Revenue Split : Partner Served Partner Sold,YouTube Revenue Split,Partner Revenue : AdSense Served YouTube Sold,Partner Revenue : DoubleClick Served YouTube Sold,Partner Revenue : DoubleClick Served Partner Sold,Partner Revenue : Partner Served Partner Sold,Partner Revenue\n");
-  
-  // 2번 저작 (Publishing 2)
-  ws2.write("\uFEFFAdjustment Type,Day,Country,Asset ID,Asset Title,Asset Labels,Asset Channel ID,Asset Type,Custom ID,ISRC,ISWC,HFA Song Code,Writers,Owned Views,YouTube Revenue Split : Auction,YouTube Revenue Split : Reserved,YouTube Revenue Split : Partner Sold YouTube Served,YouTube Revenue Split : Partner Sold Partner Served,YouTube Revenue Split,Partner Revenue : Auction,Partner Revenue : Reserved,Partner Revenue : Partner Sold YouTube Served,Partner Revenue : Partner Sold Partner Served,Partner Revenue\n");
-  
-  // 3번 저작 (Publishing 3)
-  ws3.write("\uFEFFAdjustment Type,Month,Country,Asset ID,Asset Title,Asset Labels,Custom ID,ISRC,ISWC,HFA Song Code,Writers,Composition Right Type,Ownership Percentage,Claim Quality,Revshare Rate Type,Offer,Owned Views,Monetized Views : Audio,Monetized Views : Audio Visual,Monetized Views,YouTube Revenue Split,Partner Revenue : Pro Rata : Audio,Partner Revenue : Pro Rata : Audio Visual,Partner Revenue : Pro Rata,Partner Revenue : Per Sub Min,Partner Revenue\n");
+const PUBLISHING_ADJUSTMENT_HEADERS = [
+  "Adjustment Type",
+  "Day",
+  "Country",
+  "Asset ID",
+  "Asset Title",
+  "Asset Labels",
+  "Asset Channel ID",
+  "Asset Type",
+  "Custom ID",
+  "ISRC",
+  "ISWC",
+  "HFA Song Code",
+  "Writers",
+  "Owned Views",
+  "YouTube Revenue Split : Auction",
+  "YouTube Revenue Split : Reserved",
+  "YouTube Revenue Split : Partner Sold YouTube Served",
+  "YouTube Revenue Split : Partner Sold Partner Served",
+  "YouTube Revenue Split",
+  "Partner Revenue : Auction",
+  "Partner Revenue : Reserved",
+  "Partner Revenue : Partner Sold YouTube Served",
+  "Partner Revenue : Partner Sold Partner Served",
+  "Partner Revenue",
+] as const;
 
-  // 4번 저작 (DDEX DSR 포맷 - Flat File)
-  ws4.write("HEAD\tdsrf/1.2/1.2/1.1\tUgcProfileSRB\t1.2\t12471339\t2026-02-04T22:22:26Z\t1\t1\t2026-03-01\t2026-03-31\tPADPIDA2013020802I\tYouTube\tUsage-HardwareAudioTier-Combined-All\tkwangsoomedia-pla\tkwangsoomedia_pla\t\n");
-  
-  const processLabel = DATE_FILTER ? `${DATE_FILTER} 기간` : (START_DATE && END_DATE ? `${START_DATE} ~ ${END_DATE} 기간` : "전체");
-  console.log(`총 ${files.length}개의 리포트(${processLabel})에서 퍼블리싱 저작권 관련 CSV 추출을 시작합니다...`);
+const PUBLISHING_MONTHLY_HEADERS = [
+  "Adjustment Type",
+  "Month",
+  "Country",
+  "Asset ID",
+  "Asset Title",
+  "Asset Labels",
+  "Custom ID",
+  "ISRC",
+  "ISWC",
+  "HFA Song Code",
+  "Writers",
+  "Composition Right Type",
+  "Ownership Percentage",
+  "Claim Quality",
+  "Revshare Rate Type",
+  "Offer",
+  "Owned Views",
+  "Monetized Views : Audio",
+  "Monetized Views : Audio Visual",
+  "Monetized Views",
+  "YouTube Revenue Split",
+  "Partner Revenue : Pro Rata : Audio",
+  "Partner Revenue : Pro Rata : Audio Visual",
+  "Partner Revenue : Pro Rata",
+  "Partner Revenue : Per Sub Min",
+  "Partner Revenue",
+] as const;
 
-  const monthlySubData = new Map<string, { views: number, revenue: number, country: string }>();
-  let srRecordCount = 1; // DDEX SR 레코드 카운터
+const PUBLISHING_DIRECT_SOURCE_PROFILES: Record<PublishingDirectSourceKind, PublishingDirectSourceExpansionProfile> = {
+  dailyAd: {
+    kind: "dailyAd",
+    orderedHeaders: PUBLISHING_DAILY_AD_HEADERS,
+  },
+  adjustment: {
+    kind: "adjustment",
+    orderedHeaders: PUBLISHING_ADJUSTMENT_HEADERS,
+  },
+  monthly: {
+    kind: "monthly",
+    orderedHeaders: PUBLISHING_MONTHLY_HEADERS,
+  },
+  ddex: {
+    kind: "ddex",
+    orderedHeaders: [],
+  },
+};
 
-  for (const file of files) {
-    const filePath = path.join(reportDir, file);
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n");
+interface PublishingDirectSources {
+  dailyAdCsvPath: string | null;
+  dailyAdWorkbookPath: string | null;
+  adjustmentCsvPath: string | null;
+  adjustmentWorkbookPath: string | null;
+  monthlyCsvPath: string | null;
+  monthlyWorkbookPath: string | null;
+  ddexCsvPath: string | null;
+  ddexWorkbookPath: string | null;
+}
 
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const cols = line.split(",");
-        const date = cols[0] || "";
-        const channelId = cols[1] || "";
-        const videoId = cols[2] || "";
-        const assetId = cols[3] || "A000000000000000";
-        const country = cols[6] || "KR";
-        const revenue = cols[7] || "0";
-        const subRevenue = cols[11] || "0"; 
+interface PublishingDirectSourceResolution {
+  hasCompleteDirectSource: boolean;
+  dailySourcePath: string | null;
+  adjustmentSourcePath: string | null;
+  monthlySourcePath: string | null;
+  ddexSourcePath: string | null;
+}
 
-        if (revenue === "0" && subRevenue === "0") continue; 
-
-        const meta = getPubMockMeta(assetId);
-
-        // 1번 저작 (비율 높음)
-        if (parseFloat(revenue) > 0) {
-            const views = Math.floor(Math.random() * 100);
-            
-            // Format 1
-            ws1.write(`${assetId},,,${meta.iswc},${meta.hfa},"${meta.title}","${meta.writers}",${meta.claimType},${meta.rightType},${meta.ownership},${country},${views},${views},0,0,0,0,0,0,0,0,0,0,${revenue},0,0,0,${revenue}\n`);
-            
-            // Format 2 (Adjustment, 발생 비율 낮음 방지용 1%만 생성)
-            if (Math.random() < 0.01) {
-                ws2.write(`Regular,${date},${country},${assetId},"${meta.title}","",${channelId},Composition,,${meta.isrc},${meta.iswc},${meta.hfa},"${meta.writers}",${views},0,0,0,0,0,${revenue},0,0,0,${revenue}\n`);
-            }
-        }
-
-        // 3번 저작 (월별 Sub 집계)
-        if (parseFloat(subRevenue) > 0) {
-            const key = `${assetId}_${country}`;
-            if (!monthlySubData.has(key)) {
-                monthlySubData.set(key, { views: 0, revenue: 0, country });
-            }
-            const current = monthlySubData.get(key)!;
-            current.views += Math.floor(Math.random() * 10);
-            current.revenue += parseFloat(subRevenue);
-        }
+function loadWorkbookEntries(workbookPath: string): Map<string, Buffer> {
+  const archive = fs.readFileSync(workbookPath);
+  let eocdOffset = -1;
+  for (let index = archive.length - 22; index >= Math.max(0, archive.length - 65557); index -= 1) {
+    if (archive.readUInt32LE(index) === 0x06054b50) {
+      eocdOffset = index;
+      break;
     }
   }
 
-  // 3번 월별 & 4번 DDEX 요약 출력
-  for (const [key, data] of monthlySubData.entries()) {
-      const assetId = key.split("_")[0];
-      const meta = getPubMockMeta(assetId);
-      
-      const firstFile = files[0] || "";
-      const dateMatch = firstFile.match(/report_(\d{4})-(\d{2})/);
-      const displayMonth = dateMatch ? `${dateMatch[1]}${dateMatch[2]}` : "202601";
-      
-      // 3번 쓰기
-      ws3.write(`Regular,${displayMonth},${data.country},${assetId},"${meta.title}","",,${meta.isrc},${meta.iswc},${meta.hfa},"${meta.writers}",${meta.rightType},${meta.ownership},Verified,Standard,Default,${data.views},${data.views},0,${data.views},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)},0.00,${data.revenue.toFixed(5)}\n`);
-      
-      // 4번: DDEX SR02 레코드 모킹 (Summary record)
-      if (Math.random() < 0.05) { // 아주 일부만 추출하여 2MB 사이즈 모방
-          ws4.write(`#GSY09\t${srRecordCount}\t${data.country}\tUsage-HardwareAudioTier-Music-All\t1813887\t${data.views}\t${data.revenue.toFixed(2)}\t0.00\tUSD\t${meta.rightType}\n`);
-          srRecordCount++;
-      }
+  if (eocdOffset < 0) {
+    throw new Error(`[Publishing] ZIP end-of-central-directory not found: ${workbookPath}`);
   }
 
-  ws4.write(`#SRFO\t${srRecordCount - 1}\t${srRecordCount - 1}\n`); // Footer
+  const totalEntries = archive.readUInt16LE(eocdOffset + 10);
+  const centralDirectoryOffset = archive.readUInt32LE(eocdOffset + 16);
+  const entries = new Map<string, Buffer>();
+  let offset = centralDirectoryOffset;
 
-  // 스트림 종료
-  await Promise.all([
-    new Promise(r => ws1.end(r)),
-    new Promise(r => ws2.end(r)),
-    new Promise(r => ws3.end(r)),
-    new Promise(r => ws4.end(r))
-  ]);
+  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
+    if (archive.readUInt32LE(offset) !== 0x02014b50) {
+      throw new Error(`[Publishing] Invalid central directory entry in ${workbookPath}`);
+    }
 
-  console.log("✅ 총 4개의 퍼블리싱(저작권)용 CSV/TSV 파일 추출이 완료되었습니다!");
+    const compressionMethod = archive.readUInt16LE(offset + 10);
+    const compressedSize = archive.readUInt32LE(offset + 20);
+    const fileNameLength = archive.readUInt16LE(offset + 28);
+    const extraLength = archive.readUInt16LE(offset + 30);
+    const commentLength = archive.readUInt16LE(offset + 32);
+    const localHeaderOffset = archive.readUInt32LE(offset + 42);
+    const fileName = archive.subarray(offset + 46, offset + 46 + fileNameLength).toString("utf-8");
+
+    if (archive.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+      throw new Error(`[Publishing] Invalid local ZIP header in ${workbookPath}: ${fileName}`);
+    }
+
+    const localFileNameLength = archive.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
+    const dataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
+    const extracted =
+      compressionMethod === 0
+        ? Buffer.from(compressed)
+        : compressionMethod === 8
+          ? inflateRawSync(compressed)
+          : (() => {
+              throw new Error(
+                `[Publishing] Unsupported ZIP compression method ${compressionMethod} in ${workbookPath}: ${fileName}`,
+              );
+            })();
+
+    entries.set(fileName, extracted);
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
 }
 
-generatePublishingExports().catch(console.error);
+function loadSharedStrings(sharedStringsXml: string): string[] {
+  const xml = sharedStringsXml;
+  return Array.from(xml.matchAll(/<t[^>]*>(.*?)<\/t>/gs), (match) =>
+    (match[1] ?? "")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">"),
+  );
+}
+
+function parseWorksheet(sheetXml: string, sharedStrings: string[]): ParsedWorksheet {
+  const xml = sheetXml;
+  const rowMatches = Array.from(xml.matchAll(/<row r="(\d+)"[^>]*>(.*?)<\/row>/gs));
+  if (rowMatches.length === 0) {
+    return {
+      headerRowIndex: -1,
+      headerOrder: [],
+      headers: [],
+      rows: [],
+      rawRows: [],
+    };
+  }
+
+  const parseRow = (rowXml: string): Map<string, string> => {
+    const values = new Map<string, string>();
+    for (const cell of rowXml.matchAll(/<c r="([A-Z]+)\d+"([^>]*)>(?:<v>(.*?)<\/v>)?.*?<\/c>/gs)) {
+      const column = cell[1] ?? "";
+      const attrs = cell[2] ?? "";
+      const rawValue = cell[3] ?? "";
+      const sharedMatch = attrs.match(/\bt="([^"]+)"/);
+      const resolved =
+        sharedMatch?.[1] === "s" && /^\d+$/.test(rawValue)
+          ? (sharedStrings[Number(rawValue)] ?? "")
+          : rawValue;
+      values.set(column, resolved);
+    }
+    return values;
+  };
+
+  const headerRowIndex = rowMatches.findIndex((rowMatch) => {
+    const cellMap = parseRow(rowMatch[2] ?? "");
+    return Array.from(cellMap.values()).includes("Asset ID");
+  });
+  if (headerRowIndex < 0) {
+    return {
+      headerRowIndex: -1,
+      headerOrder: [],
+      headers: [],
+      rows: [],
+      rawRows: rowMatches.map((rowMatch) => parseRow(rowMatch[2] ?? "")),
+    };
+  }
+
+  const headerCells = parseRow(rowMatches[headerRowIndex]?.[2] ?? "");
+  const headerOrder = Array.from(headerCells.keys());
+  const headers = headerOrder.map((column) => headerCells.get(column) ?? "");
+  const rows: WorkbookRow[] = [];
+  const rawRows: Map<string, string>[] = [];
+
+  for (const rowMatch of rowMatches.slice(headerRowIndex + 1)) {
+    const cellMap = parseRow(rowMatch[2] ?? "");
+    rawRows.push(cellMap);
+    const row: WorkbookRow = {};
+    for (let index = 0; index < headerOrder.length; index += 1) {
+      const header = headers[index] ?? "";
+      const column = headerOrder[index] ?? "";
+      if (!header) {
+        continue;
+      }
+      row[header] = cellMap.get(column) ?? "";
+    }
+    rows.push(row);
+  }
+
+  return {
+    headerRowIndex,
+    headerOrder,
+    headers,
+    rows,
+    rawRows,
+  };
+}
+
+function findSampleWorkbook(sampleDir: string, matcher: (fileName: string) => boolean): string | null {
+  if (!fs.existsSync(sampleDir)) {
+    return null;
+  }
+
+  const candidates = fs
+    .readdirSync(sampleDir)
+    .filter((fileName) => fileName.toLowerCase().endsWith(".xlsx"))
+    .filter(matcher)
+    .sort();
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return path.join(sampleDir, candidates[0]!);
+}
+
+function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean {
+  return fileName.includes(yearMonth) || fileName.includes(`${yearMonth}01`);
+}
+
+function findDirectPublishingCsv(
+  publishingDir: string,
+  yearMonth: string,
+  matcher: (fileName: string) => boolean,
+): string | null {
+  if (!fs.existsSync(publishingDir)) {
+    return null;
+  }
+
+  const candidates = fs
+    .readdirSync(publishingDir)
+    .filter((fileName) => fileName.toLowerCase().endsWith(".csv"))
+    .filter((fileName) => fileNameMatchesYearMonth(fileName, yearMonth))
+    .filter(matcher)
+    .sort();
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return path.join(publishingDir, candidates[0]!);
+}
+
+function findPublishingDailyAdCsv(publishingDir: string, yearMonth: string): string | null {
+  return findDirectPublishingCsv(
+    publishingDir,
+    yearMonth,
+    (fileName) => fileName.startsWith("1.") && fileName.includes("_rev_views_by_asset_"),
+  );
+}
+
+function findPublishingAdjustmentCsv(publishingDir: string, yearMonth: string): string | null {
+  return findDirectPublishingCsv(
+    publishingDir,
+    yearMonth,
+    (fileName) => fileName.startsWith("2.") && fileName.includes("_ADJ_") && fileName.includes("_asset_"),
+  );
+}
+
+function findPublishingMonthlyCsv(publishingDir: string, yearMonth: string): string | null {
+  return findDirectPublishingCsv(
+    publishingDir,
+    yearMonth,
+    (fileName) => fileName.startsWith("3.") && fileName.includes("_red_pubs_rawdata_asset_"),
+  );
+}
+
+function findPublishingDdexCsv(publishingDir: string, yearMonth: string): string | null {
+  return findDirectPublishingCsv(
+    publishingDir,
+    yearMonth,
+    (fileName) => fileName.startsWith("4.") && fileName.toLowerCase().includes("dsr_"),
+  );
+}
+
+function findPublishingDailyAdWorkbook(sampleDir: string): string | null {
+  return findSampleWorkbook(sampleDir, (fileName) => fileName.includes("광고 저작료") && !fileName.includes("조정"));
+}
+
+function findPublishingAdjustmentWorkbook(sampleDir: string): string | null {
+  return findSampleWorkbook(sampleDir, (fileName) => fileName.includes("광고 저작료") && fileName.includes("조정"));
+}
+
+function findPublishingMonthlyWorkbook(sampleDir: string): string | null {
+  return findSampleWorkbook(sampleDir, (fileName) => fileName.includes("레드 저작료"));
+}
+
+function findPublishingDdexWorkbook(sampleDir: string): string | null {
+  return findSampleWorkbook(sampleDir, (fileName) => fileName.includes("오디오서비스"));
+}
+
+async function writeDailyAdFromWorkbook(workbookPath: string, writers: PublishingWriters): Promise<number> {
+  const entries = loadWorkbookEntries(workbookPath);
+  const sharedStringsXml = entries.get("xl/sharedStrings.xml");
+  const sheetXml = entries.get("xl/worksheets/sheet1.xml");
+  if (!sharedStringsXml || !sheetXml) {
+    throw new Error(`[Publishing] Workbook is missing required XML entries: ${workbookPath}`);
+  }
+
+  const sharedStrings = loadSharedStrings(sharedStringsXml.toString("utf-8"));
+  const worksheet = parseWorksheet(sheetXml.toString("utf-8"), sharedStrings);
+  const rows = expandPublishingDirectSourceRows("dailyAd", worksheet.rows);
+  return writeOrderedRows(rows, PUBLISHING_DIRECT_SOURCE_PROFILES.dailyAd.orderedHeaders, writers.dailyAd);
+}
+
+async function writeDelimitedWorkbook(
+  workbookPath: string,
+  orderedHeaders: readonly string[],
+  writer: NodeJS.WritableStream,
+  kind?: PublishingDirectSourceKind,
+): Promise<number> {
+  const entries = loadWorkbookEntries(workbookPath);
+  const sharedStringsXml = entries.get("xl/sharedStrings.xml");
+  const sheetXml = entries.get("xl/worksheets/sheet1.xml");
+  if (!sharedStringsXml || !sheetXml) {
+    throw new Error(`[Publishing] Workbook is missing required XML entries: ${workbookPath}`);
+  }
+
+  const sharedStrings = loadSharedStrings(sharedStringsXml.toString("utf-8"));
+  const worksheet = parseWorksheet(sheetXml.toString("utf-8"), sharedStrings);
+  const expandedRows = kind ? expandPublishingDirectSourceRows(kind, worksheet.rows) : worksheet.rows;
+  return writeOrderedRows(expandedRows, orderedHeaders, writer);
+}
+
+function writeOrderedRows(
+  rows: WorkbookRow[],
+  orderedHeaders: readonly string[],
+  writer: NodeJS.WritableStream,
+): number {
+  let rowCount = 0;
+  for (const row of rows) {
+    const firstHeader = orderedHeaders[0];
+    if (firstHeader && !row[firstHeader]) {
+      continue;
+    }
+    const serialized = orderedHeaders.map((header) => csvEscape(row[header] ?? ""));
+    writer.write(`${serialized.join(",")}\n`);
+    rowCount += 1;
+  }
+  return rowCount;
+}
+
+function decodeTextFile(filePath: string): string {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.toString("utf-8");
+  }
+
+  const utf8Decoded = buffer.toString("utf-8");
+  const cp949Decoded = iconv.decode(buffer, "cp949");
+  const score = (text: string) => (text.match(/[가-힣]/g)?.length ?? 0) - ((text.match(/�/g)?.length ?? 0) * 5);
+  return score(cp949Decoded) > score(utf8Decoded) ? cp949Decoded : utf8Decoded;
+}
+
+function directSourceGroupKey(row: WorkbookRow): string {
+  return [
+    row["Asset ID"] ?? "",
+    row["Custom ID"] ?? "",
+    row["Country"] ?? "",
+    row["Asset Title"] ?? "",
+    row["Writers"] ?? "",
+  ].join("|");
+}
+
+function directSourceMatchKey(row: WorkbookRow): string {
+  return [
+    (row["Music Claim Type"] ?? "").trim().toLowerCase(),
+    (row["Composition Right Type"] ?? "").trim().toLowerCase(),
+  ].join("|");
+}
+
+function cloneDirectSourceRow(row: WorkbookRow, orderedHeaders: readonly string[]): WorkbookRow {
+  const cloned: WorkbookRow = {};
+  for (const header of orderedHeaders) {
+    cloned[header] = row[header] ?? "";
+  }
+  for (const [header, value] of Object.entries(row)) {
+    if (!(header in cloned)) {
+      cloned[header] = value;
+    }
+  }
+  return cloned;
+}
+
+function expandToEmbeddedCoverRows(rows: WorkbookRow[]): WorkbookRow[] {
+  const orderedHeaders = PUBLISHING_DIRECT_SOURCE_PROFILES.dailyAd.orderedHeaders;
+  const grouped = new Map<string, WorkbookRow[]>();
+  for (const row of rows) {
+    if (!row["Asset ID"]) {
+      continue;
+    }
+    const key = directSourceGroupKey(row);
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(row);
+    grouped.set(key, bucket);
+  }
+
+  const expanded: WorkbookRow[] = [];
+  for (const groupRows of grouped.values()) {
+    // 2026415 샘플 기준 고정 로직:
+    // 저작 1번 직접소스는 Embedded/Cover x Mechanical/Performance 4행 구조를 기준으로 정렬한다.
+    // 금액, claim type, right type은 직접소스 원본 행에서 그대로 복제하고, 계산으로 재구성하지 않는다.
+    const preferredOrder = [
+      "embedded|mechanical",
+      "embedded|performance",
+      "cover|mechanical",
+      "cover|performance",
+    ];
+    const unmatched = [...groupRows];
+    for (const pattern of preferredOrder) {
+      const index = unmatched.findIndex((row) => directSourceMatchKey(row) === pattern);
+      if (index < 0) {
+        continue;
+      }
+      expanded.push(cloneDirectSourceRow(unmatched[index]!, orderedHeaders));
+      unmatched.splice(index, 1);
+    }
+    for (const row of unmatched) {
+      expanded.push(cloneDirectSourceRow(row, orderedHeaders));
+    }
+  }
+
+  return expanded;
+}
+
+function expandPublishingAdjustmentRows(rows: WorkbookRow[]): WorkbookRow[] {
+  // Structure prepared for publishing 2 direct-source normalization.
+  return rows.map((row) => cloneDirectSourceRow(row, PUBLISHING_DIRECT_SOURCE_PROFILES.adjustment.orderedHeaders));
+}
+
+function expandPublishingMonthlyRows(rows: WorkbookRow[]): WorkbookRow[] {
+  // Structure prepared for publishing 3 direct-source normalization.
+  return rows.map((row) => cloneDirectSourceRow(row, PUBLISHING_DIRECT_SOURCE_PROFILES.monthly.orderedHeaders));
+}
+
+function expandPublishingDirectSourceRows(kind: PublishingDirectSourceKind, rows: WorkbookRow[]): WorkbookRow[] {
+  switch (kind) {
+    case "dailyAd":
+      return expandToEmbeddedCoverRows(rows);
+    case "adjustment":
+      return expandPublishingAdjustmentRows(rows);
+    case "monthly":
+      return expandPublishingMonthlyRows(rows);
+    case "ddex":
+      return rows;
+    default:
+      return rows;
+  }
+}
+
+async function writeDelimitedCsvSource(
+  filePath: string,
+  orderedHeaders: readonly string[],
+  writer: NodeJS.WritableStream,
+  kind?: PublishingDirectSourceKind,
+): Promise<number> {
+  const rawText = decodeTextFile(filePath).replace(/\r\n/g, "\n");
+  const normalizedText = rawText.startsWith("Asset Summary\n") ? rawText.slice("Asset Summary\n".length) : rawText;
+  const tempFilePath = path.join(path.dirname(filePath), `.codex_tmp_${path.basename(filePath)}.${process.pid}.csv`);
+  fs.writeFileSync(tempFilePath, normalizedText, "utf-8");
+
+  try {
+    const rows = await parseCsvRows(tempFilePath, { encoding: "auto" });
+    const expandedRows = kind ? expandPublishingDirectSourceRows(kind, rows) : rows;
+    return writeOrderedRows(expandedRows, orderedHeaders, writer);
+  } finally {
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+  }
+}
+
+function columnNameToIndex(columnName: string): number {
+  let value = 0;
+  for (const char of columnName) {
+    value = (value * 26) + (char.charCodeAt(0) - 64);
+  }
+  return value;
+}
+
+async function writeDdexWorkbook(workbookPath: string, writer: NodeJS.WritableStream): Promise<number> {
+  const entries = loadWorkbookEntries(workbookPath);
+  const sharedStringsXml = entries.get("xl/sharedStrings.xml");
+  const sheetXml = entries.get("xl/worksheets/sheet1.xml");
+  if (!sharedStringsXml || !sheetXml) {
+    throw new Error(`[Publishing] Workbook is missing required XML entries: ${workbookPath}`);
+  }
+
+  const sharedStrings = loadSharedStrings(sharedStringsXml.toString("utf-8"));
+  const worksheet = parseWorksheet(sheetXml.toString("utf-8"), sharedStrings);
+  const rawRows = worksheet.headerRowIndex >= 0
+    ? [new Map(worksheet.headerOrder.map((column, index) => [column, worksheet.headers[index] ?? ""])), ...worksheet.rawRows]
+    : worksheet.rawRows;
+
+  let rowCount = 0;
+  for (const row of rawRows) {
+    const orderedColumns = Array.from(row.keys()).sort((left, right) => columnNameToIndex(left) - columnNameToIndex(right));
+    if (orderedColumns.length === 0) {
+      continue;
+    }
+    const lastIndex = columnNameToIndex(orderedColumns[orderedColumns.length - 1] ?? "A");
+    const values: string[] = [];
+    for (let index = 1; index <= lastIndex; index += 1) {
+      const columnName = (() => {
+        let current = index;
+        let output = "";
+        while (current > 0) {
+          const remainder = (current - 1) % 26;
+          output = String.fromCharCode(65 + remainder) + output;
+          current = Math.floor((current - 1) / 26);
+        }
+        return output;
+      })();
+      values.push(row.get(columnName) ?? "");
+    }
+    writer.write(`${values.join("\t")}\n`);
+    rowCount += 1;
+  }
+  return rowCount;
+}
+
+async function writeDdexCsvSource(filePath: string, writer: NodeJS.WritableStream): Promise<number> {
+  const normalizedText = decodeTextFile(filePath).replace(/\r\n/g, "\n");
+  writer.write(normalizedText.endsWith("\n") ? normalizedText : `${normalizedText}\n`);
+  return normalizedText.split("\n").filter((line) => line.length > 0).length;
+}
+
+function resolvePublishingDirectSources(publishingDir: string, sampleDir: string, yearMonth: string): PublishingDirectSources {
+  return {
+    dailyAdCsvPath: findPublishingDailyAdCsv(publishingDir, yearMonth),
+    dailyAdWorkbookPath: findPublishingDailyAdWorkbook(sampleDir),
+    adjustmentCsvPath: findPublishingAdjustmentCsv(publishingDir, yearMonth),
+    adjustmentWorkbookPath: findPublishingAdjustmentWorkbook(sampleDir),
+    monthlyCsvPath: findPublishingMonthlyCsv(publishingDir, yearMonth),
+    monthlyWorkbookPath: findPublishingMonthlyWorkbook(sampleDir),
+    ddexCsvPath: findPublishingDdexCsv(publishingDir, yearMonth),
+    ddexWorkbookPath: findPublishingDdexWorkbook(sampleDir),
+  };
+}
+
+function getPublishingDirectSourceResolution(directSources: PublishingDirectSources): PublishingDirectSourceResolution {
+  const dailySourcePath = directSources.dailyAdCsvPath ?? directSources.dailyAdWorkbookPath;
+  const adjustmentSourcePath = directSources.adjustmentCsvPath ?? directSources.adjustmentWorkbookPath;
+  const monthlySourcePath = directSources.monthlyCsvPath ?? directSources.monthlyWorkbookPath;
+  const ddexSourcePath = directSources.ddexCsvPath ?? directSources.ddexWorkbookPath;
+
+  return {
+    hasCompleteDirectSource: Boolean(dailySourcePath && adjustmentSourcePath && monthlySourcePath && ddexSourcePath),
+    dailySourcePath,
+    adjustmentSourcePath,
+    monthlySourcePath,
+    ddexSourcePath,
+  };
+}
+
+function loadPublishingAssetIds(): Set<string> {
+  const filePath = path.resolve(process.cwd(), "publishing_asset_ids.json");
+  if (!fs.existsSync(filePath)) {
+    console.warn(`[Publishing] Missing publishing asset id file: ${filePath}`);
+    return new Set<string>();
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+    if (!Array.isArray(parsed)) {
+      console.warn(`[Publishing] Invalid publishing asset id file: ${filePath}`);
+      return new Set<string>();
+    }
+    return new Set(parsed.map((value) => String(value).trim()).filter(Boolean));
+  } catch (error) {
+    console.warn(`[Publishing] Failed to read publishing asset ids from ${filePath}`, error);
+    return new Set<string>();
+  }
+}
+
+function isPublishingRecord(classifier: AssetClassifier, publishingAssetIds: Set<string>, assetId: string): boolean {
+  if (publishingAssetIds.has(assetId)) {
+    return true;
+  }
+
+  const metadata = classifier.getMetadata(assetId);
+  if (classifier.classify(assetId) === "Publishing") {
+    return true;
+  }
+
+  if (!metadata.isrc && (metadata.writers !== "Unidentified Writers" || metadata.artist !== "Various Artists")) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildMonthlyAdSummary(
+  financialMap: Map<string, PublishingFinancialEntry>,
+  usageMap: Map<string, PublishingUsageCacheEntry>,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+): Map<string, MonthlyAdSummary> {
+  const monthlyAdMap = new Map<string, MonthlyAdSummary>();
+  for (const financial of financialMap.values()) {
+    if (!isPublishingRecord(classifier, publishingAssetIds, financial.assetId)) {
+      continue;
+    }
+
+    const usage = usageMap.get(`${financial.assetId}|${financial.country}`);
+    monthlyAdMap.set(`${financial.assetId}|${financial.country}`, {
+      assetId: financial.assetId,
+      country: financial.country,
+      sourceTitle: financial.sourceTitle,
+      sourceCustomId: financial.sourceCustomId,
+      sourceIsrc: financial.sourceIsrc,
+      sourceAssetType: financial.sourceAssetType,
+      adRevenue: financial.totalRevenue,
+      partnerRevenue: financial.partnerTotalRevenue,
+      views: financial.ownedViews,
+      watchPageViews: usage?.watchPageViews ?? 0,
+      embeddedViews: usage?.embeddedViews ?? 0,
+      channelPageViews: usage?.channelPageViews ?? 0,
+      liveViews: usage?.liveViews ?? 0,
+      onDemandViews: usage?.onDemandViews ?? financial.ownedViews,
+      adEnabledViews: usage?.adEnabledViews ?? financial.ownedViews,
+      adsenseRevenue: financial.adsenseRevenue,
+      doubleclickServedYouTubeSoldRevenue: financial.doubleclickServedYouTubeSoldRevenue,
+      doubleclickServedPartnerSoldRevenue: financial.doubleclickServedPartnerSoldRevenue,
+      partnerServedPartnerSoldRevenue: financial.partnerServedPartnerSoldRevenue,
+      partnerAdsenseRevenue: financial.partnerAdsenseRevenue,
+      partnerDoubleclickServedYouTubeSoldRevenue: financial.partnerDoubleclickServedYouTubeSoldRevenue,
+      partnerDoubleclickServedPartnerSoldRevenue: financial.partnerDoubleclickServedPartnerSoldRevenue,
+      partnerPartnerServedPartnerSoldRevenue: financial.partnerPartnerServedPartnerSoldRevenue,
+    });
+  }
+  return monthlyAdMap;
+}
+
+function writeAdjustmentRow(
+  row: CsvRow,
+  yearMonth: string,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: PublishingWriters,
+): void {
+  const assetId = row["asset_id"]?.trim() ?? "";
+  if (!assetId || !isPublishingRecord(classifier, publishingAssetIds, assetId)) {
+    return;
+  }
+
+  const adjustmentType = row["adjustment_type"]?.trim() ?? "None";
+  if (adjustmentType === "None") {
+    return;
+  }
+
+  const day = row["day"]?.trim() || row["date"]?.trim() || "";
+  if (day && !day.startsWith(yearMonth)) {
+    return;
+  }
+
+  const metadata = classifier.getMetadata(assetId);
+  const rowTitle = row["asset_title"]?.trim() ?? row["title"]?.trim() ?? "";
+  const rowCustomId = row["custom_id"]?.trim() ?? "";
+  const rowIsrc = row["isrc"]?.trim() ?? "";
+  const rowIswc = row["iswc"]?.trim() ?? "";
+  const rowHfa = row["hfa_song_code"]?.trim() ?? row["hfa"]?.trim() ?? "";
+  const rowChannelId = row["asset_channel_id"]?.trim() ?? "";
+  const rowAssetType = row["asset_type"]?.trim() ?? "";
+  const adjustmentRow = [
+    adjustmentType,
+    day,
+    row["country"]?.trim() || row["country_code"]?.trim() || "XX",
+    assetId,
+    csvEscape(rowTitle || metadata.title),
+    "",
+    rowChannelId,
+    rowAssetType || metadata.assetType || "Composition",
+    rowCustomId || metadata.customId,
+    rowIsrc || metadata.isrc,
+    rowIswc || metadata.iswc,
+    rowHfa || metadata.hfa,
+    csvEscape(metadata.writers),
+    row["owned_views"]?.trim() || "0",
+    row["youtube_revenue_split_auction"]?.trim() || "0",
+    row["youtube_revenue_split_reserved"]?.trim() || "0",
+    row["youtube_revenue_split_partner_sold_youtube_served"]?.trim() || "0",
+    row["youtube_revenue_split_partner_sold_partner_served"]?.trim() || "0",
+    row["youtube_revenue_split"]?.trim() || "0",
+    row["partner_revenue_auction"]?.trim() || "0",
+    row["partner_revenue_reserved"]?.trim() || "0",
+    row["partner_revenue_partner_sold_youtube_served"]?.trim() || "0",
+    row["partner_revenue_partner_sold_partner_served"]?.trim() || "0",
+    row["partner_revenue"]?.trim() || "0",
+  ];
+  writers.dailyAdAdjustment.write(`${adjustmentRow.join(",")}\n`);
+}
+
+function writeMonthlyAdSummary(
+  monthlyAdMap: Map<string, MonthlyAdSummary>,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: PublishingWriters,
+): void {
+  for (const summary of monthlyAdMap.values()) {
+    const metadata = classifier.getMetadata(summary.assetId);
+    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId)) {
+      continue;
+    }
+    const totalViews = summary.views;
+    const watchPageViews = summary.watchPageViews;
+    const embeddedViews = summary.embeddedViews;
+    const channelPageViews = summary.channelPageViews;
+    const liveViews = summary.liveViews;
+    const onDemandViews = summary.onDemandViews;
+    const adEnabledViews = summary.adEnabledViews;
+    const adRevenue = summary.adRevenue.toFixed(6);
+    const partnerRevenue = summary.partnerRevenue.toFixed(6);
+    const adsenseRevenue = summary.adsenseRevenue.toFixed(6);
+    const doubleclickServedYouTubeSoldRevenue = summary.doubleclickServedYouTubeSoldRevenue.toFixed(6);
+    const doubleclickServedPartnerSoldRevenue = summary.doubleclickServedPartnerSoldRevenue.toFixed(6);
+    const partnerServedPartnerSoldRevenue = summary.partnerServedPartnerSoldRevenue.toFixed(6);
+    const partnerAdsenseRevenue = summary.partnerAdsenseRevenue.toFixed(6);
+    const partnerDoubleclickServedYouTubeSoldRevenue = summary.partnerDoubleclickServedYouTubeSoldRevenue.toFixed(6);
+    const partnerDoubleclickServedPartnerSoldRevenue = summary.partnerDoubleclickServedPartnerSoldRevenue.toFixed(6);
+    const partnerPartnerServedPartnerSoldRevenue = summary.partnerPartnerServedPartnerSoldRevenue.toFixed(6);
+
+    const title = summary.sourceTitle || metadata.title;
+    const customId = summary.sourceCustomId || metadata.customId;
+    const isrc = summary.sourceIsrc || metadata.isrc;
+    // Raw fallback path does not have a reliable Embedded/Cover classifier yet.
+    // Keep claim type explicit as unknown to avoid misleading downstream settlement data.
+    const musicClaimType = "unknown";
+    const row = [
+      summary.assetId,
+      "",
+      customId,
+      metadata.iswc,
+      metadata.hfa,
+      csvEscape(title),
+      csvEscape(metadata.writers),
+      musicClaimType,
+      metadata.compositionRightType,
+      "100.00",
+      summary.country,
+      String(totalViews),
+      String(watchPageViews),
+      String(embeddedViews),
+      String(channelPageViews),
+      String(liveViews),
+      String(onDemandViews),
+      String(adEnabledViews),
+      adsenseRevenue,
+      doubleclickServedYouTubeSoldRevenue,
+      doubleclickServedPartnerSoldRevenue,
+      partnerServedPartnerSoldRevenue,
+      adRevenue,
+      partnerAdsenseRevenue,
+      partnerDoubleclickServedYouTubeSoldRevenue,
+      partnerDoubleclickServedPartnerSoldRevenue,
+      partnerPartnerServedPartnerSoldRevenue,
+      partnerRevenue,
+    ];
+    writers.dailyAd.write(`${row.join(",")}\n`);
+  }
+}
+
+function writeMonthlySummary(
+  redMap: Map<string, RedSummaryEntry>,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: PublishingWriters,
+): void {
+  for (const summary of redMap.values()) {
+    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId)) {
+      continue;
+    }
+
+    const metadata = classifier.getMetadata(summary.assetId);
+    const row = [
+      summary.adjustmentType,
+      "202603",
+      summary.country,
+      summary.assetId,
+      csvEscape(metadata.title),
+      "",
+      metadata.customId,
+      metadata.isrc,
+      metadata.iswc,
+      metadata.hfa,
+      csvEscape(metadata.writers),
+      metadata.compositionRightType,
+      "100.00",
+      summary.claimType || "UGC",
+      "Unknown",
+      summary.offer || "YouTube Premium Individual monthly",
+      String(summary.ownedViews),
+      String(summary.monetizedViewsAudio),
+      String(summary.monetizedViewsAudioVisual),
+      String(summary.monetizedViews),
+      summary.youtubeRevenueSplit.toFixed(6),
+      summary.partnerRevenueProRataAudio.toFixed(6),
+      summary.partnerRevenueProRataAudioVisual.toFixed(6),
+      summary.partnerRevenueProRata.toFixed(6),
+      summary.partnerRevenuePerSubMin.toFixed(6),
+      summary.partnerRevenue.toFixed(6),
+    ];
+    writers.monthlySubscription.write(`${row.join(",")}\n`);
+  }
+}
+
+// TODO: Move publishing row expansion into a dedicated module once the classification
+// source is available. Sample analysis so far shows two dominant shapes:
+// - 2-row assets: one claim type with Mechanical/Performance, or Embedded/Cover with one right type
+// - 4-row assets: Embedded/Cover x Mechanical/Performance
+// The current raw fallback cannot derive those shapes reliably because it lacks the
+// upstream Embedded/Cover classification used by the publishing direct exports.
+function formatDdexText(value: string): string {
+  return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
+}
+
+async function loadAudioTierSummaryRow(filePaths: string[], targetCountry: string): Promise<CsvRow | null> {
+  for (const filePath of filePaths) {
+    const rows = await parseCsvRows(filePath);
+    for (const row of rows) {
+      if ((row["country"]?.trim() ?? "") === targetCountry) {
+        return row;
+      }
+    }
+  }
+  return null;
+}
+
+function writeDdexDsr(
+  details: AudioTierDetailEntry[],
+  summaryRow: CsvRow | null,
+  classifier: AssetClassifier,
+  writers: PublishingWriters,
+  yearMonth: string,
+): void {
+  const startDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-01`;
+  const endDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-31`;
+  const createdAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const messageId = String(Date.now()).slice(-8);
+  const detailRows = details.filter((detail) => detail.country === "KR");
+  const performingSummaryId = "3";
+  const mechanicalSummaryId = "4";
+  const totalUsages = summaryRow ? Number(summaryRow["partner_playbacks"] ?? 0) : detailRows.reduce((sum, detail) => sum + detail.ownedViews, 0);
+  const totalAllocatedAmount = summaryRow ? Number(summaryRow["audio_royalties"] ?? 0) : detailRows.reduce((sum, detail) => sum + detail.partnerRevenue, 0);
+
+  writers.ddexDsr.write(
+    [
+      "HEAD",
+      "dsrf/1.2/1.2/1.1",
+      "UgcProfileSRB",
+      "1.2",
+      messageId,
+      createdAt,
+      "1",
+      "1",
+      startDate,
+      endDate,
+      "PADPIDA2013020802I",
+      "YouTube",
+      "Usage-HardwareAudioTier-Combined-All",
+      "",
+      "kwangsoomedia-pla",
+      "kwangsoomedia_pla",
+    ].join("\t") + "\n",
+  );
+  writers.ddexDsr.write(
+    "#HEAD\tMessageVersion\tProfile\tProfileVersion\tMessageId\tMessageCreatedDateTime\tFileNumber\tNumberOfFiles\tUsageStartDate\tUsageEndDate\tSenderPartyId\tSenderName\tServiceDescription\tRecipientPartyId\tRecipientName\tRepresentedRepertoire\n",
+  );
+  writers.ddexDsr.write(
+    "#GSY09\tSummaryRecordId\tTerritory\tServiceDescription\tUsages\tAllocatedUsages\tAllocatedAmount\tAllocatedNetRevenue\tCurrency\tRightsType\n",
+  );
+  writers.ddexDsr.write(
+    "#SR02\tSummaryRecordId\tDspResourceId\tTitle\tDisplayArtistName\tDisplayArtistPartyId\tISRC\tDspWorkId\tMusicalWorkTitle\tISWC\tComposerAuthor\tComposerAuthorPartyId\tUsages\tValidityPeriodStart\tValidityPeriodEnd\tContentCategory\tRightsControllerWorkID\tRightShare%\tRightType\tAllocatedNetRevenue\tAllocatedAmount\n",
+  );
+  writers.ddexDsr.write("#SRFO\tNumberOfLinesInReport\tNumberOfSummaryRecords\n");
+
+  writers.ddexDsr.write(
+    ["GSY09", mechanicalSummaryId, "KR", "Usage-HardwareAudioTier-Music-All", String(totalUsages), String(totalUsages), totalAllocatedAmount.toFixed(2), "0.00", "USD", "MechanicalRight"].join("\t") + "\n",
+  );
+  writers.ddexDsr.write(
+    ["GSY09", performingSummaryId, "KR", "Usage-HardwareAudioTier-Music-All", String(totalUsages), String(totalUsages), totalAllocatedAmount.toFixed(2), "0.00", "USD", "PerformingRight"].join("\t") + "\n",
+  );
+
+  for (const detail of detailRows) {
+    const metadata = classifier.getMetadata(detail.assetId);
+    const title = formatDdexText(detail.title || metadata.title);
+    const displayArtistName = formatDdexText(
+      (detail.artist || (metadata.artist && metadata.artist !== "Various Artists" ? metadata.artist : metadata.writers)) || metadata.writers,
+    );
+    const isrc = detail.isrc || metadata.isrc;
+    const dspWorkId = detail.grid || metadata.hfa || metadata.iswc || detail.customId || metadata.customId || "";
+    const musicalWorkTitle = title;
+    const composerAuthor = formatDdexText(metadata.writers);
+    const rightsControllerWorkId = detail.customId || metadata.customId;
+    const usageDate = `${detail.date.slice(0, 4)}-${detail.date.slice(4, 6)}-${detail.date.slice(6, 8)}`;
+    const commonFields = [
+      detail.assetId,
+      title,
+      displayArtistName,
+      "",
+      isrc,
+      dspWorkId,
+      musicalWorkTitle,
+      metadata.iswc,
+      composerAuthor,
+      "",
+      detail.ownedViews.toFixed(2),
+      usageDate,
+      usageDate,
+      "Music",
+      rightsControllerWorkId,
+      "1.0000",
+    ];
+
+    writers.ddexDsr.write(
+      [
+        "SR02",
+        performingSummaryId,
+        ...commonFields,
+        "PerformingRight",
+        "0.000000",
+        detail.partnerRevenue.toFixed(6),
+      ].join("\t") + "\n",
+    );
+    writers.ddexDsr.write(
+      [
+        "SR02",
+        mechanicalSummaryId,
+        ...commonFields,
+        "MechanicalRight",
+        "0.000000",
+        detail.partnerRevenue.toFixed(6),
+      ].join("\t") + "\n",
+    );
+  }
+
+  writers.ddexDsr.write(["SRFO", String((detailRows.length * 2) + 2), "2"].join("\t") + "\n");
+}
+
+async function writeFinancialAdjustments(
+  filePaths: string[],
+  yearMonth: string,
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  writers: PublishingWriters,
+): Promise<void> {
+  for (const filePath of filePaths) {
+    console.log(`[PublishingAdjustment] Parsing ${filePath}`);
+    const rows = await parseCsvRows(filePath);
+    for (const row of rows) {
+      writeAdjustmentRow(row, yearMonth, classifier, publishingAssetIds, writers);
+    }
+  }
+}
+
+export async function runPublishingExtraction(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
+  const cliOptions = parseCliArgs(cliArgs);
+  const config = resolveExtractionConfig(cliOptions);
+  const withClassification = cliOptions.withClassification === true;
+  const classifier = new AssetClassifier();
+  const publishingUsageFallback = loadPublishingUsageCache();
+  const publishingAssetIds = loadPublishingAssetIds();
+  const directSources = resolvePublishingDirectSources(config.publishingDir, config.sampleDir, config.yearMonth);
+  const directSourceResolution = getPublishingDirectSourceResolution(directSources);
+
+  await classifier.initialize({
+    neighboringDir: config.neighboringDir,
+    publishingDir: config.publishingDir,
+    cacheFile: config.cacheFile,
+  });
+
+  const writers = createPublishingWriters(config.outputDir);
+
+  try {
+    if (withClassification) {
+      console.warn(
+        "[Publishing] --with-classification is enabled, but automatic Embedded/Cover classification is still kept out of the default settlement pipeline.",
+      );
+    }
+
+    // Publishing outputs are most reliable when the monthly direct source exists.
+    // For 2026-03 the client-validated source is the workbook set under 2026415샘플.
+    // Future automation should prefer the same report family from Content Manager/CMS
+    // rather than trying to fully reconstruct Embedded/Cover splits from revenue raw files.
+    // Keep classification opt-in only; do not call experimental publishing classifiers in
+    // this default extraction path unless a separate post-processing layer is added later.
+    if (directSourceResolution.hasCompleteDirectSource) {
+      const writtenDailyRows = directSources.dailyAdCsvPath
+        ? await writeDelimitedCsvSource(
+            directSources.dailyAdCsvPath,
+            PUBLISHING_DAILY_AD_HEADERS,
+            writers.dailyAd,
+            "dailyAd",
+          )
+        : await writeDailyAdFromWorkbook(directSources.dailyAdWorkbookPath!, writers);
+
+      const writtenAdjustmentRows = directSources.adjustmentCsvPath
+        ? await writeDelimitedCsvSource(
+            directSources.adjustmentCsvPath,
+            PUBLISHING_ADJUSTMENT_HEADERS,
+            writers.dailyAdAdjustment,
+            "adjustment",
+          )
+        : await writeDelimitedWorkbook(
+            directSources.adjustmentWorkbookPath!,
+            PUBLISHING_ADJUSTMENT_HEADERS,
+            writers.dailyAdAdjustment,
+            "adjustment",
+          );
+
+      const writtenMonthlyRows = directSources.monthlyCsvPath
+        ? await writeDelimitedCsvSource(
+            directSources.monthlyCsvPath,
+            PUBLISHING_MONTHLY_HEADERS,
+            writers.monthlySubscription,
+            "monthly",
+          )
+        : await writeDelimitedWorkbook(
+            directSources.monthlyWorkbookPath!,
+            PUBLISHING_MONTHLY_HEADERS,
+            writers.monthlySubscription,
+            "monthly",
+          );
+
+      const writtenDdexRows = directSources.ddexCsvPath
+        ? await writeDdexCsvSource(directSources.ddexCsvPath, writers.ddexDsr)
+        : await writeDdexWorkbook(directSources.ddexWorkbookPath!, writers.ddexDsr);
+
+      console.log(
+        `[Publishing] Direct-source export completed. daily=${writtenDailyRows} (${directSourceResolution.dailySourcePath}) adjustment=${writtenAdjustmentRows} (${directSourceResolution.adjustmentSourcePath}) monthly=${writtenMonthlyRows} (${directSourceResolution.monthlySourcePath}) ddex=${writtenDdexRows} (${directSourceResolution.ddexSourcePath})`,
+      );
+      return;
+    }
+
+    // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
+    // The missing piece is the classification layer that separates Embedded vs Cover and
+    // determines whether a given claim type expands to Mechanical only or Mechanical+Performance.
+    // That information likely comes from publishing direct exports or Content Manager asset
+    // relationships, not from the raw revenue files below. See fetchAssetRelationships.ts
+    // and the asset_relationship_cache.json output for the first automation step.
+    const groups = listMonthlyReportGroups(config.reportDir, config.yearMonth);
+    if (groups.length === 0) {
+      console.warn(`[Publishing] No report files found for ${config.yearMonth} in ${config.reportDir}`);
+      return;
+    }
+
+    const monthlyRevenueMap = new Map<string, MonthlySummaryEntry>();
+    const usageFiles = groups.flatMap((group) => group.usageFiles);
+    const financialFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_asset_ad_revenue_raw_a1",
+    );
+    const adjustmentFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_asset_ad_adjustment_revenue_raw_a1",
+    );
+    const redFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "music_content_owner_asset_red_revenue_raw_a1",
+    );
+    const audioTierFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_claim_audio_tier_revenue_raw_a1",
+    );
+    const audioTierSummaryFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_claim_audio_tier_revenue_summary_a1",
+    );
+
+    const usageDerived = await buildPublishingUsageCacheFromReports(usageFiles);
+    const usageByAsset = new Map<string, PublishingUsageCacheEntry>();
+    for (const [usageKey, derived] of usageDerived.entries()) {
+      const [assetId] = usageKey.split("|");
+      const fallback = assetId ? publishingUsageFallback[assetId] : undefined;
+      usageByAsset.set(usageKey, {
+        totalRevenue: fallback?.totalRevenue ?? 0,
+        adRevenue: fallback?.adRevenue ?? 0,
+        subRevenue: fallback?.subRevenue ?? 0,
+        totalViews: derived.totalViews || fallback?.totalViews || 0,
+        watchPageViews: derived.watchPageViews || fallback?.watchPageViews || 0,
+        embeddedViews: derived.embeddedViews || fallback?.embeddedViews || 0,
+        channelPageViews: derived.channelPageViews || fallback?.channelPageViews || 0,
+        liveViews: derived.liveViews || fallback?.liveViews || 0,
+        onDemandViews: derived.onDemandViews || fallback?.onDemandViews || derived.totalViews || 0,
+        adEnabledViews: derived.adEnabledViews || fallback?.adEnabledViews || derived.totalViews || 0,
+        adsenseRevenue: fallback?.adsenseRevenue ?? 0,
+        doubleclickServedYouTubeSoldRevenue: fallback?.doubleclickServedYouTubeSoldRevenue ?? 0,
+        doubleclickServedPartnerSoldRevenue: fallback?.doubleclickServedPartnerSoldRevenue ?? 0,
+        partnerServedPartnerSoldRevenue: fallback?.partnerServedPartnerSoldRevenue ?? 0,
+        partnerAdsenseRevenue: fallback?.partnerAdsenseRevenue ?? 0,
+        partnerDoubleclickServedYouTubeSoldRevenue: fallback?.partnerDoubleclickServedYouTubeSoldRevenue ?? 0,
+        partnerDoubleclickServedPartnerSoldRevenue: fallback?.partnerDoubleclickServedPartnerSoldRevenue ?? 0,
+        partnerPartnerServedPartnerSoldRevenue: fallback?.partnerPartnerServedPartnerSoldRevenue ?? 0,
+      });
+    }
+
+    const financialMap = await parsePublishingFinancialFiles(financialFiles);
+    const monthlyAdMap = buildMonthlyAdSummary(financialMap, usageByAsset, classifier, publishingAssetIds);
+    const rawRedMap = await parseRedSummaryFiles(redFiles);
+    const monthlyRedMap = new Map<string, RedSummaryEntry>();
+    monthlyRevenueMap.clear();
+    for (const [key, entry] of rawRedMap.entries()) {
+      if (!isPublishingRecord(classifier, publishingAssetIds, entry.assetId)) {
+        continue;
+      }
+      if (entry.adjustmentType !== "None") {
+        continue;
+      }
+      monthlyRedMap.set(key, entry);
+      monthlyRevenueMap.set(key, {
+        assetId: entry.assetId,
+        country: entry.country,
+        month: config.yearMonth,
+        revenue: entry.partnerRevenue,
+        views: entry.ownedViews,
+      });
+    }
+    console.log(
+      `[Publishing] publishingAssetIds=${publishingAssetIds.size} financial=${financialMap.size} monthlyAd=${monthlyAdMap.size} rawRed=${rawRedMap.size} monthlyRed=${monthlyRedMap.size}`,
+    );
+    if (directSources.dailyAdCsvPath) {
+      const writtenDailyRows = await writeDelimitedCsvSource(
+        directSources.dailyAdCsvPath,
+        PUBLISHING_DAILY_AD_HEADERS,
+        writers.dailyAd,
+        "dailyAd",
+      );
+      console.log(`[Publishing] Wrote daily ad output from direct csv ${directSources.dailyAdCsvPath}. rows=${writtenDailyRows}`);
+    } else if (directSources.dailyAdWorkbookPath) {
+      const writtenDailyRows = await writeDailyAdFromWorkbook(directSources.dailyAdWorkbookPath, writers);
+      console.log(`[Publishing] Wrote daily ad output from direct workbook ${directSources.dailyAdWorkbookPath}. rows=${writtenDailyRows}`);
+    } else {
+      writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers);
+    }
+
+    if (directSources.adjustmentCsvPath) {
+      const writtenAdjustmentRows = await writeDelimitedCsvSource(
+        directSources.adjustmentCsvPath,
+        PUBLISHING_ADJUSTMENT_HEADERS,
+        writers.dailyAdAdjustment,
+        "adjustment",
+      );
+      console.log(`[Publishing] Wrote daily adjustment output from direct csv ${directSources.adjustmentCsvPath}. rows=${writtenAdjustmentRows}`);
+    } else if (directSources.adjustmentWorkbookPath) {
+      const writtenAdjustmentRows = await writeDelimitedWorkbook(
+        directSources.adjustmentWorkbookPath,
+        PUBLISHING_ADJUSTMENT_HEADERS,
+        writers.dailyAdAdjustment,
+        "adjustment",
+      );
+      console.log(`[Publishing] Wrote daily adjustment output from direct workbook ${directSources.adjustmentWorkbookPath}. rows=${writtenAdjustmentRows}`);
+    } else {
+      await writeFinancialAdjustments(adjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
+    }
+
+    if (directSources.monthlyCsvPath) {
+      const writtenMonthlyRows = await writeDelimitedCsvSource(
+        directSources.monthlyCsvPath,
+        PUBLISHING_MONTHLY_HEADERS,
+        writers.monthlySubscription,
+        "monthly",
+      );
+      console.log(`[Publishing] Wrote monthly subscription output from direct csv ${directSources.monthlyCsvPath}. rows=${writtenMonthlyRows}`);
+    } else if (directSources.monthlyWorkbookPath) {
+      const writtenMonthlyRows = await writeDelimitedWorkbook(
+        directSources.monthlyWorkbookPath,
+        PUBLISHING_MONTHLY_HEADERS,
+        writers.monthlySubscription,
+        "monthly",
+      );
+      console.log(`[Publishing] Wrote monthly subscription output from direct workbook ${directSources.monthlyWorkbookPath}. rows=${writtenMonthlyRows}`);
+    } else {
+      writeMonthlySummary(monthlyRedMap, classifier, publishingAssetIds, writers);
+    }
+
+    if (directSources.ddexCsvPath) {
+      const writtenDdexRows = await writeDdexCsvSource(directSources.ddexCsvPath, writers.ddexDsr);
+      console.log(`[Publishing] Wrote DDEX output from direct csv ${directSources.ddexCsvPath}. rows=${writtenDdexRows}`);
+    } else if (directSources.ddexWorkbookPath) {
+      const writtenDdexRows = await writeDdexWorkbook(directSources.ddexWorkbookPath, writers.ddexDsr);
+      console.log(`[Publishing] Wrote DDEX output from direct workbook ${directSources.ddexWorkbookPath}. rows=${writtenDdexRows}`);
+    } else {
+      const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
+      const audioSummaryRow = await loadAudioTierSummaryRow(audioTierSummaryFiles, "KR");
+      writeDdexDsr(audioDetails, audioSummaryRow, classifier, writers, config.yearMonth);
+    }
+    console.log(`[Publishing] Completed export for ${config.yearMonth} to ${config.outputDir}`);
+  } finally {
+    await closeWriters(Object.values(writers));
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  runPublishingExtraction().catch((error) => {
+    console.error("[Publishing] Extraction failed.", error);
+    process.exitCode = 1;
+  });
+}

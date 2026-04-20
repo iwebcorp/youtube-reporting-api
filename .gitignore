@@ -38,3 +38,7 @@ reports/
 # [추가] 데이터 파일 (용량 방지)
 *.csv
 *.txt
+*.xlsx
+*.tsv
+*.json
+*.zip

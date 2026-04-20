@@ -1,11 +1,13 @@
 import { google } from "googleapis";
 import { getAuthClient } from "./auth.js";
+import { loadConfig } from "./configLoader.js";
+
+const cfg = loadConfig();
 
 async function createMetadataJobs() {
   const auth = await getAuthClient();
   const youtubereporting = google.youtubereporting({ version: "v1", auth });
 
-  const CMS_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 
   const jobsToCreate = [
     { type: "content_owner_video_metadata_a1", name: "Video Metadata Job" },
@@ -15,7 +17,7 @@ async function createMetadataJobs() {
   for (const job of jobsToCreate) {
     try {
       const res = await youtubereporting.jobs.create({
-        onBehalfOfContentOwner: CMS_ID,
+        onBehalfOfContentOwner: cfg.contentOwnerId,
         requestBody: {
           reportTypeId: job.type,
           name: job.name,

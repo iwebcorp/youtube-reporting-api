@@ -1,12 +1,15 @@
 import { google } from "googleapis";
 import { getAuthClient } from "./auth.js";
+import { loadConfig } from "./configLoader.js";
+
+const cfg = loadConfig();
 
 async function listJobs() {
   const auth = await getAuthClient();
   const youtubereporting = google.youtubereporting({ version: "v1", auth });
 
   const res = await youtubereporting.jobs.list({
-    onBehalfOfContentOwner: "2jFu0i9K0PE3MDrkU_UUfQ", // CMS ID
+    onBehalfOfContentOwner: cfg.contentOwnerId,
   });
 
   const jobs = res.data.jobs || [];
