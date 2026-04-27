@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
+import iconv from "iconv-lite";
 import { AssetClassifier } from "./assetClassifier.js";
 import { parseCsvRows } from "./reporting/parsers.js";
 import { csvEscape, ensureDirectory, parseCliArgs, parseNumber, resolveExtractionConfig } from "./reporting/utils.js";
@@ -139,7 +140,7 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
     );
   }
 
-  fs.writeFileSync(outputPath, `${lines.join("\n")}\n`, "utf-8");
+  fs.writeFileSync(outputPath, iconv.encode(`${lines.join("\n")}\n`, "cp949"));
   console.log(`[Shorts] Wrote ${outputPath}. rows=${rows.length} files=${combinedFiles.length}`);
 }
 

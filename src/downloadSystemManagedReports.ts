@@ -36,11 +36,7 @@ function toMonthDateRange(yearMonth: string): { start: Date; end: Date } {
 function isMatchingMonth(report: { startTime?: string | null; endTime?: string | null }, yearMonth: string): boolean {
   const range = toMonthDateRange(yearMonth);
   const startTime = report.startTime ? new Date(report.startTime) : null;
-  const endTime = report.endTime ? new Date(report.endTime) : null;
-  return Boolean(
-    (startTime && startTime >= range.start && startTime < range.end) ||
-      (endTime && endTime > range.start && endTime <= new Date(range.end.getTime() + 86400000)),
-  );
+  return Boolean(startTime && startTime >= range.start && startTime < range.end);
 }
 
 async function downloadFile(

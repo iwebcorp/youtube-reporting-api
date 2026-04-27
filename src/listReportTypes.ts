@@ -10,8 +10,15 @@ async function listReportTypes() {
     const ytReporting = google.youtubereporting({ version: 'v1', auth: authClient });
     const res = await ytReporting.reportTypes.list({
       onBehalfOfContentOwner: cfg.contentOwnerId,
+      includeSystemManaged: true,
     });
-    console.log(res.data.reportTypes?.map(rt => rt.id));
+    console.log(
+      res.data.reportTypes?.map((rt) => ({
+        id: rt.id,
+        name: rt.name,
+        systemManaged: rt.systemManaged,
+      })),
+    );
   } catch (error) {
     console.error('Error listing report types:', error);
   }
