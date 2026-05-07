@@ -669,24 +669,24 @@ async function writeDdexCsvSource(filePath: string, writer: NodeJS.WritableStrea
   return normalizedText.split("\n").filter((line) => line.length > 0).length;
 }
 
-function resolvePublishingDirectSources(publishingDir: string, sampleDir: string, yearMonth: string): PublishingDirectSources {
+function resolvePublishingDirectSources(publishingDir: string, yearMonth: string): PublishingDirectSources {
   return {
     dailyAdCsvPath: findPublishingDailyAdCsv(publishingDir, yearMonth),
-    dailyAdWorkbookPath: findPublishingDailyAdWorkbook(sampleDir),
+    dailyAdWorkbookPath: null,
     adjustmentCsvPath: findPublishingAdjustmentCsv(publishingDir, yearMonth),
-    adjustmentWorkbookPath: findPublishingAdjustmentWorkbook(sampleDir),
+    adjustmentWorkbookPath: null,
     monthlyCsvPath: findPublishingMonthlyCsv(publishingDir, yearMonth),
-    monthlyWorkbookPath: findPublishingMonthlyWorkbook(sampleDir),
+    monthlyWorkbookPath: null,
     ddexCsvPath: findPublishingDdexCsv(publishingDir, yearMonth),
-    ddexWorkbookPath: findPublishingDdexWorkbook(sampleDir),
+    ddexWorkbookPath: null,
   };
 }
 
 function getPublishingDirectSourceResolution(directSources: PublishingDirectSources): PublishingDirectSourceResolution {
-  const dailySourcePath = directSources.dailyAdCsvPath ?? directSources.dailyAdWorkbookPath;
-  const adjustmentSourcePath = directSources.adjustmentCsvPath ?? directSources.adjustmentWorkbookPath;
-  const monthlySourcePath = directSources.monthlyCsvPath ?? directSources.monthlyWorkbookPath;
-  const ddexSourcePath = directSources.ddexCsvPath ?? directSources.ddexWorkbookPath;
+  const dailySourcePath = directSources.dailyAdCsvPath;
+  const adjustmentSourcePath = directSources.adjustmentCsvPath;
+  const monthlySourcePath = directSources.monthlyCsvPath;
+  const ddexSourcePath = directSources.ddexCsvPath;
 
   return {
     hasCompleteDirectSource: Boolean(dailySourcePath && adjustmentSourcePath && monthlySourcePath && ddexSourcePath),
@@ -906,6 +906,7 @@ function writeMonthlyAdSummary(
 
 function writeMonthlySummary(
   redMap: Map<string, RedSummaryEntry>,
+  yearMonth: string,
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: PublishingWriters,
@@ -918,7 +919,7 @@ function writeMonthlySummary(
     const metadata = classifier.getMetadata(summary.assetId);
     const row = [
       summary.adjustmentType,
-      "202603",
+      yearMonth,
       summary.country,
       summary.assetId,
       csvEscape(metadata.title),
@@ -1104,7 +1105,7 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
   const classifier = new AssetClassifier();
   const publishingUsageFallback = loadPublishingUsageCache();
   const publishingAssetIds = loadPublishingAssetIds();
-  const directSources = resolvePublishingDirectSources(config.publishingDir, config.sampleDir, config.yearMonth);
+  const directSources = resolvePublishingDirectSources(config.publishingDir, config.yearMonth);
   const directSourceResolution = getPublishingDirectSourceResolution(directSources);
 
   await classifier.initialize({
@@ -1122,59 +1123,41 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       );
     }
 
-    // Publishing outputs are most reliable when the monthly direct source exists.
-    // For 2026-03 the client-validated source is the workbook set under 2026415샘플.
-    // Future automation should prefer the same report family from Content Manager/CMS
-    // rather than trying to fully reconstruct Embedded/Cover splits from revenue raw files.
-    // Keep classification opt-in only; do not call experimental publishing classifiers in
-    // this default extraction path unless a separate post-processing layer is added later.
+    // Direct publishing sources must come from the target-month API/export folder.
+    // Client sample workbooks are intentionally excluded from the settlement pipeline.
     if (directSourceResolution.hasCompleteDirectSource) {
-      const writtenDailyRows = directSources.dailyAdCsvPath
-        ? await writeDelimitedCsvSource(
-            directSources.dailyAdCsvPath,
-            PUBLISHING_DAILY_AD_HEADERS,
-            writers.dailyAd,
-            "dailyAd",
-          )
-        : await writeDailyAdFromWorkbook(directSources.dailyAdWorkbookPath!, writers);
+      const writtenDailyRows = await writeDelimitedCsvSource(
+        directSources.dailyAdCsvPath!,
+        PUBLISHING_DAILY_AD_HEADERS,
+        writers.dailyAd,
+        "dailyAd",
+      );
 
-      const writtenAdjustmentRows = directSources.adjustmentCsvPath
-        ? await writeDelimitedCsvSource(
-            directSources.adjustmentCsvPath,
-            PUBLISHING_ADJUSTMENT_HEADERS,
-            writers.dailyAdAdjustment,
-            "adjustment",
-          )
-        : await writeDelimitedWorkbook(
-            directSources.adjustmentWorkbookPath!,
-            PUBLISHING_ADJUSTMENT_HEADERS,
-            writers.dailyAdAdjustment,
-            "adjustment",
-          );
+      const writtenAdjustmentRows = await writeDelimitedCsvSource(
+        directSources.adjustmentCsvPath!,
+        PUBLISHING_ADJUSTMENT_HEADERS,
+        writers.dailyAdAdjustment,
+        "adjustment",
+      );
 
-      const writtenMonthlyRows = directSources.monthlyCsvPath
-        ? await writeDelimitedCsvSource(
-            directSources.monthlyCsvPath,
-            PUBLISHING_MONTHLY_HEADERS,
-            writers.monthlySubscription,
-            "monthly",
-          )
-        : await writeDelimitedWorkbook(
-            directSources.monthlyWorkbookPath!,
-            PUBLISHING_MONTHLY_HEADERS,
-            writers.monthlySubscription,
-            "monthly",
-          );
+      const writtenMonthlyRows = await writeDelimitedCsvSource(
+        directSources.monthlyCsvPath!,
+        PUBLISHING_MONTHLY_HEADERS,
+        writers.monthlySubscription,
+        "monthly",
+      );
 
-      const writtenDdexRows = directSources.ddexCsvPath
-        ? await writeDdexCsvSource(directSources.ddexCsvPath, writers.ddexDsr)
-        : await writeDdexWorkbook(directSources.ddexWorkbookPath!, writers.ddexDsr);
+      const writtenDdexRows = await writeDdexCsvSource(directSources.ddexCsvPath!, writers.ddexDsr);
 
       console.log(
         `[Publishing] Direct-source export completed. daily=${writtenDailyRows} (${directSourceResolution.dailySourcePath}) adjustment=${writtenAdjustmentRows} (${directSourceResolution.adjustmentSourcePath}) monthly=${writtenMonthlyRows} (${directSourceResolution.monthlySourcePath}) ddex=${writtenDdexRows} (${directSourceResolution.ddexSourcePath})`,
       );
       return;
     }
+
+    console.warn(
+      `[Publishing] Complete target-month direct source not found in ${config.publishingDir}. Reconstructing from API reports only.`,
+    );
 
     // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
     // The missing piece is the classification layer that separates Embedded vs Cover and
@@ -1215,6 +1198,26 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       config.yearMonth,
       "content_owner_claim_audio_tier_revenue_summary_a1",
     );
+
+    const hasAnyApiMonthlySource = Boolean(
+      financialFiles.length > 0 ||
+        adjustmentFiles.length > 0 ||
+        redFiles.length > 0 ||
+        audioTierFiles.length > 0 ||
+        audioTierSummaryFiles.length > 0,
+    );
+    const hasAnyPartialDirectSource = Boolean(
+      directSources.dailyAdCsvPath ||
+        directSources.adjustmentCsvPath ||
+        directSources.monthlyCsvPath ||
+        directSources.ddexCsvPath,
+    );
+    if (!hasAnyApiMonthlySource && !hasAnyPartialDirectSource) {
+      console.warn(
+        `[Publishing] No API monthly source files found for ${config.yearMonth} in ${config.systemManagedDir}. Leaving publishing outputs header-only.`,
+      );
+      return;
+    }
 
     const usageDerived = await buildPublishingUsageCacheFromReports(usageFiles);
     const usageByAsset = new Map<string, PublishingUsageCacheEntry>();
@@ -1275,9 +1278,6 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
         "dailyAd",
       );
       console.log(`[Publishing] Wrote daily ad output from direct csv ${directSources.dailyAdCsvPath}. rows=${writtenDailyRows}`);
-    } else if (directSources.dailyAdWorkbookPath) {
-      const writtenDailyRows = await writeDailyAdFromWorkbook(directSources.dailyAdWorkbookPath, writers);
-      console.log(`[Publishing] Wrote daily ad output from direct workbook ${directSources.dailyAdWorkbookPath}. rows=${writtenDailyRows}`);
     } else {
       writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers);
     }
@@ -1290,14 +1290,6 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
         "adjustment",
       );
       console.log(`[Publishing] Wrote daily adjustment output from direct csv ${directSources.adjustmentCsvPath}. rows=${writtenAdjustmentRows}`);
-    } else if (directSources.adjustmentWorkbookPath) {
-      const writtenAdjustmentRows = await writeDelimitedWorkbook(
-        directSources.adjustmentWorkbookPath,
-        PUBLISHING_ADJUSTMENT_HEADERS,
-        writers.dailyAdAdjustment,
-        "adjustment",
-      );
-      console.log(`[Publishing] Wrote daily adjustment output from direct workbook ${directSources.adjustmentWorkbookPath}. rows=${writtenAdjustmentRows}`);
     } else {
       await writeFinancialAdjustments(adjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
     }
@@ -1310,24 +1302,13 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
         "monthly",
       );
       console.log(`[Publishing] Wrote monthly subscription output from direct csv ${directSources.monthlyCsvPath}. rows=${writtenMonthlyRows}`);
-    } else if (directSources.monthlyWorkbookPath) {
-      const writtenMonthlyRows = await writeDelimitedWorkbook(
-        directSources.monthlyWorkbookPath,
-        PUBLISHING_MONTHLY_HEADERS,
-        writers.monthlySubscription,
-        "monthly",
-      );
-      console.log(`[Publishing] Wrote monthly subscription output from direct workbook ${directSources.monthlyWorkbookPath}. rows=${writtenMonthlyRows}`);
     } else {
-      writeMonthlySummary(monthlyRedMap, classifier, publishingAssetIds, writers);
+      writeMonthlySummary(monthlyRedMap, config.yearMonth, classifier, publishingAssetIds, writers);
     }
 
     if (directSources.ddexCsvPath) {
       const writtenDdexRows = await writeDdexCsvSource(directSources.ddexCsvPath, writers.ddexDsr);
       console.log(`[Publishing] Wrote DDEX output from direct csv ${directSources.ddexCsvPath}. rows=${writtenDdexRows}`);
-    } else if (directSources.ddexWorkbookPath) {
-      const writtenDdexRows = await writeDdexWorkbook(directSources.ddexWorkbookPath, writers.ddexDsr);
-      console.log(`[Publishing] Wrote DDEX output from direct workbook ${directSources.ddexWorkbookPath}. rows=${writtenDdexRows}`);
     } else {
       const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
       const audioSummaryRow = await loadAudioTierSummaryRow(audioTierSummaryFiles, "KR");

@@ -344,6 +344,7 @@ function writeNeighboringAdRow(
 
 function writeNeighboringMonthlySummary(
   redMap: Map<string, RedSummaryEntry>,
+  yearMonth: string,
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: NeighboringWriters,
@@ -365,7 +366,7 @@ function writeNeighboringMonthlySummary(
     const label = summary.sourceLabel || metadata.label;
     const row = [
       summary.adjustmentType,
-      "202603",
+      yearMonth,
       summary.country,
       summary.assetId,
       csvEscape(title),
@@ -538,7 +539,7 @@ export async function runNeighboringExtraction(cliArgs: string[] = process.argv.
 
     await writeAdvertisingReports(adFiles, adAdjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
     const redMap = await parseRedSummaryFiles(redFiles);
-    writeNeighboringMonthlySummary(redMap, classifier, publishingAssetIds, writers);
+    writeNeighboringMonthlySummary(redMap, config.yearMonth, classifier, publishingAssetIds, writers);
     const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
     writeNeighboringFinancialDetail(audioDetails, classifier, publishingAssetIds, writers);
     console.log(`[Neighboring] Completed export for ${config.yearMonth} to ${config.outputDir}`);

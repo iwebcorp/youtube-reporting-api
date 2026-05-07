@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { DEFAULT_DIRECTORIES, METADATA_FALLBACKS, REPORT_TYPES, UNKNOWN_TEXT_VALUES } from "./constants.js";
+import { METADATA_FALLBACKS, REPORT_TYPES, UNKNOWN_TEXT_VALUES } from "./constants.js";
 import type {
   AssetMetadata,
   CsvRow,
@@ -95,12 +95,14 @@ export function resolveExtractionConfig(cliOptions: ExtractionCliOptions): Extra
     throw new Error(`[Config] yearMonth must be in YYYYMM format. Received: "${yearMonth}"`);
   }
 
+  const defaultCustomIdDir = `reports_custom_id_${yearMonth}`;
+
   return {
     yearMonth,
     reportDir: path.resolve(process.cwd(), clean(cliOptions.reportDir ?? appConfig.reportDir)),
     outputDir: path.resolve(process.cwd(), clean(cliOptions.outputDir ?? appConfig.outputDir)),
-    neighboringDir: path.resolve(process.cwd(), clean(cliOptions.neighboringDir ?? DEFAULT_DIRECTORIES.neighboring)),
-    publishingDir: path.resolve(process.cwd(), clean(cliOptions.publishingDir ?? DEFAULT_DIRECTORIES.publishing)),
+    neighboringDir: path.resolve(process.cwd(), clean(cliOptions.neighboringDir ?? defaultCustomIdDir)),
+    publishingDir: path.resolve(process.cwd(), clean(cliOptions.publishingDir ?? defaultCustomIdDir)),
     cacheFile: path.resolve(process.cwd(), clean(cliOptions.cacheFile ?? appConfig.cacheFile)),
     systemManagedDir: path.resolve(
       process.cwd(),

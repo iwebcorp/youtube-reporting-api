@@ -13,6 +13,7 @@
     "extract-pub": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractPublishingCsvs.ts",
     "extract-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractMonthlyClientPackage.ts",
     "extract-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractShortsSongData.ts",
+    "add-custom-id-to-reports": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/addCustomIdToReports.ts",
     "validate-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/validateClientPackage.ts",
     "build-metadata-cache": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/buildMetadataCache.ts",
     "fetch-publishing-breakdown": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchPublishingBreakdown.ts",

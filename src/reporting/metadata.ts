@@ -28,8 +28,14 @@ export class AssetMetadataRepository {
       this.neighboringAssets.clear();
       this.publishingAssets.clear();
       this.metadataMap.clear();
-      await this.scanDirectory(options.neighboringDir, "Neighboring");
-      await this.scanDirectory(options.publishingDir, "Publishing");
+      const neighboringDir = path.resolve(options.neighboringDir);
+      const publishingDir = path.resolve(options.publishingDir);
+      if (neighboringDir === publishingDir) {
+        await this.scanDirectory(neighboringDir);
+      } else {
+        await this.scanDirectory(neighboringDir, "Neighboring");
+        await this.scanDirectory(publishingDir, "Publishing");
+      }
       this.saveCache(options.cacheFile);
     } else {
       console.log("[Metadata] Cache is newer than source files. Skipping source rescan.");
@@ -141,9 +147,10 @@ export class AssetMetadataRepository {
     return false;
   }
 
-  private async scanDirectory(directoryPath: string, category: AssetCategory): Promise<void> {
+  private async scanDirectory(directoryPath: string, category?: AssetCategory): Promise<void> {
     if (!fs.existsSync(directoryPath)) {
-      console.warn(`[Metadata] Skipping missing ${category} directory: ${directoryPath}`);
+      const categoryLabel = category ?? "shared metadata";
+      console.warn(`[Metadata] Skipping missing ${categoryLabel} directory: ${directoryPath}`);
       return;
     }
 
@@ -158,7 +165,7 @@ export class AssetMetadataRepository {
     }
   }
 
-  private async scanMetadataFile(filePath: string, category: AssetCategory): Promise<void> {
+  private async scanMetadataFile(filePath: string, category?: AssetCategory): Promise<void> {
     const isTabSeparated = filePath.endsWith(".txt") || path.basename(filePath).includes("DSR");
     const rows = await parseCsvRows(filePath, {
       delimiter: isTabSeparated ? "\t" : ",",
@@ -184,12 +191,18 @@ export class AssetMetadataRepository {
     console.log(`[Metadata] ${path.basename(filePath)} processed rows=${processedCount}`);
   }
 
-  private mergeMetadata(assetId: string, row: CsvRow, category: AssetCategory): AssetMetadata {
+  private mergeMetadata(assetId: string, row: CsvRow, category?: AssetCategory): AssetMetadata {
     const existing = this.metadataMap.get(assetId) ?? withMetadataFallbacks({ assetId });
+    const sourceCategory =
+      existing.sourceCategory === "Publishing" || category === "Publishing"
+        ? "Publishing"
+        : existing.sourceCategory === "Neighboring" || category === "Neighboring"
+          ? "Neighboring"
+          : undefined;
 
     return withMetadataFallbacks({
       assetId,
-      sourceCategory: existing.sourceCategory === "Publishing" || category === "Publishing" ? "Publishing" : category,
+      sourceCategory,
       title: this.pick(existing.title, row, ["asset title", "title"]),
       customId: this.pick(existing.customId, row, ["custom id"]),
       isrc: this.pick(existing.isrc, row, ["isrc"]),
