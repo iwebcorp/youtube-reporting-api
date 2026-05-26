@@ -128,7 +128,12 @@ function loadPublishingAssetIds(): Set<string> {
 }
 
 function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean {
-  return fileName.includes(yearMonth) || fileName.includes(`${yearMonth}01`);
+  const firstDateToken = fileName.match(/\d{4}-\d{2}|\d{8}|\d{6}/)?.[0];
+  if (!firstDateToken) {
+    return false;
+  }
+
+  return firstDateToken.replace(/-/g, "").startsWith(yearMonth);
 }
 
 function findDirectNeighboringCsv(
@@ -188,6 +193,43 @@ function hasCompleteNeighboringDirectSource(directSources: NeighboringDirectSour
       directSources.monthlyCsvPath &&
       directSources.financialCsvPath,
   );
+}
+
+function isPublishingRecord(
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  assetId: string,
+  customId?: string,
+): boolean {
+  if (publishingAssetIds.has(assetId)) {
+    return true;
+  }
+
+  const customIdCategory = classifier.classifyCustomId(customId ?? "");
+  if (customIdCategory === "Publishing") {
+    return true;
+  }
+  if (customIdCategory === "Neighboring") {
+    return false;
+  }
+
+  const metadata = classifier.getMetadata(assetId);
+  if (metadata.sourceCategory === "Publishing") {
+    return true;
+  }
+  if (metadata.sourceCategory === "Neighboring") {
+    return false;
+  }
+
+  if (metadata.iswc || metadata.hfa) {
+    return true;
+  }
+
+  if (!metadata.isrc && metadata.writers !== "Unidentified Writers") {
+    return true;
+  }
+
+  return false;
 }
 
 function decodeTextFile(filePath: string): string {
@@ -274,11 +316,17 @@ async function writeNeighboringDirectCsv(
   return rowCount;
 }
 
-function isNeighboringRecord(classifier: AssetClassifier, publishingAssetIds: Set<string>, assetId: string): boolean {
-  if (publishingAssetIds.has(assetId)) {
-    return false;
-  }
-  return classifier.classify(assetId) === "Neighboring";
+function isNeighboringRecord(
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  assetId: string,
+  customId?: string,
+): boolean {
+  void classifier;
+  void publishingAssetIds;
+  void assetId;
+  void customId;
+  return true;
 }
 
 function writeNeighboringAdRow(
@@ -289,17 +337,17 @@ function writeNeighboringAdRow(
   writers: NeighboringWriters,
 ): void {
   const assetId = row["asset_id"]?.trim() ?? "";
-  if (!assetId || !isNeighboringRecord(classifier, publishingAssetIds, assetId)) {
+  if (!assetId || !isNeighboringRecord(classifier, publishingAssetIds, assetId, row["custom_id"]?.trim() ?? "")) {
     return;
   }
 
   const day = row["day"]?.trim() || row["date"]?.trim() || "";
-  if (day && !day.startsWith(yearMonth)) {
+  const isAdjustment = (row["adjustment_type"]?.trim() ?? "None") !== "None";
+  if (!isAdjustment && day && !day.startsWith(yearMonth)) {
     return;
   }
 
   const metadata = classifier.getMetadata(assetId);
-  const isAdjustment = (row["adjustment_type"]?.trim() ?? "None") !== "None";
   const target = isAdjustment ? writers.dailyAdAdjustment : writers.dailyAd;
   const title = row["asset_title"]?.trim() || metadata.title;
   const channelId = row["asset_channel_id"]?.trim() || row["channel_id"]?.trim() || metadata.channelId;
@@ -350,7 +398,7 @@ function writeNeighboringMonthlySummary(
   writers: NeighboringWriters,
 ): void {
   for (const summary of redMap.values()) {
-    if (!isNeighboringRecord(classifier, publishingAssetIds, summary.assetId)) {
+    if (!isNeighboringRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
       continue;
     }
 
@@ -386,12 +434,12 @@ function writeNeighboringMonthlySummary(
       String(summary.monetizedViewsAudio),
       String(summary.monetizedViewsAudioVisual),
       String(summary.monetizedViews),
-      summary.youtubeRevenueSplit.toFixed(6),
-      summary.partnerRevenueProRataAudio.toFixed(6),
-      summary.partnerRevenueProRataAudioVisual.toFixed(6),
-      summary.partnerRevenueProRata.toFixed(6),
-      summary.partnerRevenuePerSubMin.toFixed(6),
-      summary.partnerRevenue.toFixed(6),
+      summary.youtubeRevenueSplit.toFixed(12),
+      summary.partnerRevenueProRataAudio.toFixed(12),
+      summary.partnerRevenueProRataAudioVisual.toFixed(12),
+      summary.partnerRevenueProRata.toFixed(12),
+      summary.partnerRevenuePerSubMin.toFixed(12),
+      summary.partnerRevenue.toFixed(12),
     ];
     writers.monthlySubscription.write(`${row.join(",")}\n`);
   }
@@ -404,7 +452,7 @@ function writeNeighboringFinancialDetail(
   writers: NeighboringWriters,
 ): void {
   for (const detail of details) {
-    if (!isNeighboringRecord(classifier, publishingAssetIds, detail.assetId)) {
+    if (!isNeighboringRecord(classifier, publishingAssetIds, detail.assetId, detail.customId)) {
       continue;
     }
 
@@ -433,10 +481,10 @@ function writeNeighboringFinancialDetail(
       csvEscape(album),
       csvEscape(label),
       String(detail.ownedViews),
-      detail.youtubeRevenueSplit.toFixed(6),
-      detail.partnerRevenueProRata.toFixed(6),
-      detail.partnerRevenuePerPlayMin.toFixed(6),
-      detail.partnerRevenue.toFixed(6),
+      detail.youtubeRevenueSplit.toFixed(12),
+      detail.partnerRevenueProRata.toFixed(12),
+      detail.partnerRevenuePerPlayMin.toFixed(12),
+      detail.partnerRevenue.toFixed(12),
     ];
     writers.financialDetail.write(`${row.join(",")}\n`);
   }
@@ -469,44 +517,10 @@ async function writeAdvertisingReports(
 
 export async function runNeighboringExtraction(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const config = resolveExtractionConfig(parseCliArgs(cliArgs));
-  const directSources = resolveNeighboringDirectSources(config.neighboringDir, config.yearMonth);
   const writers = createNeighboringWriters(config.outputDir);
 
   try {
-    if (hasCompleteNeighboringDirectSource(directSources)) {
-      const writtenDailyRows = await writeNeighboringDirectCsv(
-        directSources.dailyAdCsvPath!,
-        NEIGHBORING_DAILY_AD_HEADERS,
-        writers.dailyAd,
-        "dailyAd",
-      );
-      const writtenAdjustmentRows = await writeNeighboringDirectCsv(
-        directSources.adjustmentCsvPath!,
-        NEIGHBORING_DAILY_AD_HEADERS,
-        writers.dailyAdAdjustment,
-        "adjustment",
-      );
-      const writtenMonthlyRows = await writeNeighboringDirectCsv(
-        directSources.monthlyCsvPath!,
-        NEIGHBORING_MONTHLY_HEADERS,
-        writers.monthlySubscription,
-        "monthly",
-      );
-      const writtenFinancialRows = await writeNeighboringDirectCsv(
-        directSources.financialCsvPath!,
-        NEIGHBORING_FINANCIAL_HEADERS,
-        writers.financialDetail,
-        "financial",
-      );
-      console.log(
-        `[Neighboring] Direct-source export completed. daily=${writtenDailyRows} (${directSources.dailyAdCsvPath}) adjustment=${writtenAdjustmentRows} (${directSources.adjustmentCsvPath}) monthly=${writtenMonthlyRows} (${directSources.monthlyCsvPath}) financial=${writtenFinancialRows} (${directSources.financialCsvPath})`,
-      );
-      return;
-    }
-
-    console.log(
-      `[Neighboring] Direct-source unavailable for ${config.yearMonth}. Falling back to raw/system-managed reports. daily=${directSources.dailyAdCsvPath ?? "missing"} adjustment=${directSources.adjustmentCsvPath ?? "missing"} monthly=${directSources.monthlyCsvPath ?? "missing"} financial=${directSources.financialCsvPath ?? "missing"}`,
-    );
+    console.log(`[Neighboring] API-only export for ${config.yearMonth} from ${config.systemManagedDir}`);
 
     const classifier = new AssetClassifier();
     const publishingAssetIds = loadPublishingAssetIds();
@@ -531,6 +545,11 @@ export async function runNeighboringExtraction(cliArgs: string[] = process.argv.
       config.yearMonth,
       "music_content_owner_asset_red_revenue_raw_a1",
     );
+    const redAdjustmentFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "music_content_owner_asset_red_adjustment_revenue_raw_a1",
+    );
     const audioTierFiles = listMonthlySystemManagedFiles(
       config.systemManagedDir,
       config.yearMonth,
@@ -538,7 +557,7 @@ export async function runNeighboringExtraction(cliArgs: string[] = process.argv.
     );
 
     await writeAdvertisingReports(adFiles, adAdjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
-    const redMap = await parseRedSummaryFiles(redFiles);
+    const redMap = await parseRedSummaryFiles([...redFiles, ...redAdjustmentFiles]);
     writeNeighboringMonthlySummary(redMap, config.yearMonth, classifier, publishingAssetIds, writers);
     const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
     writeNeighboringFinancialDetail(audioDetails, classifier, publishingAssetIds, writers);

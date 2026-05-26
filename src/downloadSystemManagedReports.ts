@@ -10,8 +10,10 @@ const DEFAULT_REPORT_TYPES = [
   "content_owner_asset_ad_revenue_raw_a1",
   "content_owner_asset_ad_adjustment_revenue_raw_a1",
   "music_content_owner_asset_red_revenue_raw_a1",
+  "music_content_owner_asset_red_adjustment_revenue_raw_a1",
   "content_owner_claim_audio_tier_revenue_raw_a1",
   "content_owner_claim_audio_tier_revenue_summary_a1",
+  "music_content_owner_shorts_revenue_summary_a1",
 ];
 const MAX_DOWNLOAD_ATTEMPTS = 5;
 const MAX_API_ATTEMPTS = 5;

@@ -359,7 +359,12 @@ function findSampleWorkbook(sampleDir: string, matcher: (fileName: string) => bo
 }
 
 function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean {
-  return fileName.includes(yearMonth) || fileName.includes(`${yearMonth}01`);
+  const firstDateToken = fileName.match(/\d{4}-\d{2}|\d{8}|\d{6}/)?.[0];
+  if (!firstDateToken) {
+    return false;
+  }
+
+  return firstDateToken.replace(/-/g, "").startsWith(yearMonth);
 }
 
 function findDirectPublishingCsv(
@@ -717,17 +722,37 @@ function loadPublishingAssetIds(): Set<string> {
   }
 }
 
-function isPublishingRecord(classifier: AssetClassifier, publishingAssetIds: Set<string>, assetId: string): boolean {
+function isPublishingRecord(
+  classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
+  assetId: string,
+  customId?: string,
+): boolean {
   if (publishingAssetIds.has(assetId)) {
     return true;
   }
 
+  const customIdCategory = classifier.classifyCustomId(customId ?? "");
+  if (customIdCategory === "Publishing") {
+    return true;
+  }
+  if (customIdCategory === "Neighboring") {
+    return false;
+  }
+
   const metadata = classifier.getMetadata(assetId);
-  if (classifier.classify(assetId) === "Publishing") {
+  if (metadata.sourceCategory === "Publishing") {
+    return true;
+  }
+  if (metadata.sourceCategory === "Neighboring") {
+    return false;
+  }
+
+  if (metadata.iswc || metadata.hfa) {
     return true;
   }
 
-  if (!metadata.isrc && (metadata.writers !== "Unidentified Writers" || metadata.artist !== "Various Artists")) {
+  if (!metadata.isrc && metadata.writers !== "Unidentified Writers") {
     return true;
   }
 
@@ -742,7 +767,7 @@ function buildMonthlyAdSummary(
 ): Map<string, MonthlyAdSummary> {
   const monthlyAdMap = new Map<string, MonthlyAdSummary>();
   for (const financial of financialMap.values()) {
-    if (!isPublishingRecord(classifier, publishingAssetIds, financial.assetId)) {
+    if (!isPublishingRecord(classifier, publishingAssetIds, financial.assetId, financial.sourceCustomId)) {
       continue;
     }
 
@@ -784,7 +809,7 @@ function writeAdjustmentRow(
   writers: PublishingWriters,
 ): void {
   const assetId = row["asset_id"]?.trim() ?? "";
-  if (!assetId || !isPublishingRecord(classifier, publishingAssetIds, assetId)) {
+  if (!assetId || !isPublishingRecord(classifier, publishingAssetIds, assetId, row["custom_id"]?.trim() ?? "")) {
     return;
   }
 
@@ -794,10 +819,6 @@ function writeAdjustmentRow(
   }
 
   const day = row["day"]?.trim() || row["date"]?.trim() || "";
-  if (day && !day.startsWith(yearMonth)) {
-    return;
-  }
-
   const metadata = classifier.getMetadata(assetId);
   const rowTitle = row["asset_title"]?.trim() ?? row["title"]?.trim() ?? "";
   const rowCustomId = row["custom_id"]?.trim() ?? "";
@@ -843,7 +864,7 @@ function writeMonthlyAdSummary(
 ): void {
   for (const summary of monthlyAdMap.values()) {
     const metadata = classifier.getMetadata(summary.assetId);
-    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId)) {
+    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
       continue;
     }
     const totalViews = summary.views;
@@ -853,16 +874,16 @@ function writeMonthlyAdSummary(
     const liveViews = summary.liveViews;
     const onDemandViews = summary.onDemandViews;
     const adEnabledViews = summary.adEnabledViews;
-    const adRevenue = summary.adRevenue.toFixed(6);
-    const partnerRevenue = summary.partnerRevenue.toFixed(6);
-    const adsenseRevenue = summary.adsenseRevenue.toFixed(6);
-    const doubleclickServedYouTubeSoldRevenue = summary.doubleclickServedYouTubeSoldRevenue.toFixed(6);
-    const doubleclickServedPartnerSoldRevenue = summary.doubleclickServedPartnerSoldRevenue.toFixed(6);
-    const partnerServedPartnerSoldRevenue = summary.partnerServedPartnerSoldRevenue.toFixed(6);
-    const partnerAdsenseRevenue = summary.partnerAdsenseRevenue.toFixed(6);
-    const partnerDoubleclickServedYouTubeSoldRevenue = summary.partnerDoubleclickServedYouTubeSoldRevenue.toFixed(6);
-    const partnerDoubleclickServedPartnerSoldRevenue = summary.partnerDoubleclickServedPartnerSoldRevenue.toFixed(6);
-    const partnerPartnerServedPartnerSoldRevenue = summary.partnerPartnerServedPartnerSoldRevenue.toFixed(6);
+    const adRevenue = summary.adRevenue.toFixed(12);
+    const partnerRevenue = summary.partnerRevenue.toFixed(12);
+    const adsenseRevenue = summary.adsenseRevenue.toFixed(12);
+    const doubleclickServedYouTubeSoldRevenue = summary.doubleclickServedYouTubeSoldRevenue.toFixed(12);
+    const doubleclickServedPartnerSoldRevenue = summary.doubleclickServedPartnerSoldRevenue.toFixed(12);
+    const partnerServedPartnerSoldRevenue = summary.partnerServedPartnerSoldRevenue.toFixed(12);
+    const partnerAdsenseRevenue = summary.partnerAdsenseRevenue.toFixed(12);
+    const partnerDoubleclickServedYouTubeSoldRevenue = summary.partnerDoubleclickServedYouTubeSoldRevenue.toFixed(12);
+    const partnerDoubleclickServedPartnerSoldRevenue = summary.partnerDoubleclickServedPartnerSoldRevenue.toFixed(12);
+    const partnerPartnerServedPartnerSoldRevenue = summary.partnerPartnerServedPartnerSoldRevenue.toFixed(12);
 
     const title = summary.sourceTitle || metadata.title;
     const customId = summary.sourceCustomId || metadata.customId;
@@ -912,7 +933,7 @@ function writeMonthlySummary(
   writers: PublishingWriters,
 ): void {
   for (const summary of redMap.values()) {
-    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId)) {
+    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
       continue;
     }
 
@@ -938,12 +959,12 @@ function writeMonthlySummary(
       String(summary.monetizedViewsAudio),
       String(summary.monetizedViewsAudioVisual),
       String(summary.monetizedViews),
-      summary.youtubeRevenueSplit.toFixed(6),
-      summary.partnerRevenueProRataAudio.toFixed(6),
-      summary.partnerRevenueProRataAudioVisual.toFixed(6),
-      summary.partnerRevenueProRata.toFixed(6),
-      summary.partnerRevenuePerSubMin.toFixed(6),
-      summary.partnerRevenue.toFixed(6),
+      summary.youtubeRevenueSplit.toFixed(12),
+      summary.partnerRevenueProRataAudio.toFixed(12),
+      summary.partnerRevenueProRataAudioVisual.toFixed(12),
+      summary.partnerRevenueProRata.toFixed(12),
+      summary.partnerRevenuePerSubMin.toFixed(12),
+      summary.partnerRevenue.toFixed(12),
     ];
     writers.monthlySubscription.write(`${row.join(",")}\n`);
   }
@@ -959,22 +980,19 @@ function formatDdexText(value: string): string {
   return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 }
 
-async function loadAudioTierSummaryRow(filePaths: string[], targetCountry: string): Promise<CsvRow | null> {
+async function loadAudioTierSummaryRows(filePaths: string[]): Promise<CsvRow[]> {
+  const rows: CsvRow[] = [];
   for (const filePath of filePaths) {
-    const rows = await parseCsvRows(filePath);
-    for (const row of rows) {
-      if ((row["country"]?.trim() ?? "") === targetCountry) {
-        return row;
-      }
-    }
+    rows.push(...(await parseCsvRows(filePath)));
   }
-  return null;
+  return rows;
 }
 
 function writeDdexDsr(
   details: AudioTierDetailEntry[],
-  summaryRow: CsvRow | null,
+  summaryRows: CsvRow[],
   classifier: AssetClassifier,
+  publishingAssetIds: Set<string>,
   writers: PublishingWriters,
   yearMonth: string,
 ): void {
@@ -982,11 +1000,28 @@ function writeDdexDsr(
   const endDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-31`;
   const createdAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const messageId = String(Date.now()).slice(-8);
-  const detailRows = details.filter((detail) => detail.country === "KR");
-  const performingSummaryId = "3";
-  const mechanicalSummaryId = "4";
-  const totalUsages = summaryRow ? Number(summaryRow["partner_playbacks"] ?? 0) : detailRows.reduce((sum, detail) => sum + detail.ownedViews, 0);
-  const totalAllocatedAmount = summaryRow ? Number(summaryRow["audio_royalties"] ?? 0) : detailRows.reduce((sum, detail) => sum + detail.partnerRevenue, 0);
+  const detailRows = details
+    .filter((detail) => isPublishingRecord(classifier, publishingAssetIds, detail.assetId, detail.customId))
+    .sort((left, right) => {
+    if (left.country !== right.country) {
+      return left.country.localeCompare(right.country);
+    }
+    if (left.date !== right.date) {
+      return left.date.localeCompare(right.date);
+    }
+    return left.assetId.localeCompare(right.assetId);
+  });
+  const summaryByCountry = new Map(summaryRows.map((row) => [(row["country"]?.trim() ?? "XX"), row]));
+  const detailTotalsByCountry = new Map<string, { usages: number; amount: number }>();
+  for (const detail of detailRows) {
+    const entry = detailTotalsByCountry.get(detail.country) ?? { usages: 0, amount: 0 };
+    entry.usages += detail.ownedViews;
+    entry.amount += detail.partnerRevenue;
+    detailTotalsByCountry.set(detail.country, entry);
+  }
+  const countryRows = Array.from(detailTotalsByCountry.keys()).sort((left, right) => left.localeCompare(right));
+  const summaryIdByCountry = new Map<string, { performing: string; mechanical: string }>();
+  let nextSummaryId = 3;
 
   writers.ddexDsr.write(
     [
@@ -1019,14 +1054,51 @@ function writeDdexDsr(
   );
   writers.ddexDsr.write("#SRFO\tNumberOfLinesInReport\tNumberOfSummaryRecords\n");
 
-  writers.ddexDsr.write(
-    ["GSY09", mechanicalSummaryId, "KR", "Usage-HardwareAudioTier-Music-All", String(totalUsages), String(totalUsages), totalAllocatedAmount.toFixed(2), "0.00", "USD", "MechanicalRight"].join("\t") + "\n",
-  );
-  writers.ddexDsr.write(
-    ["GSY09", performingSummaryId, "KR", "Usage-HardwareAudioTier-Music-All", String(totalUsages), String(totalUsages), totalAllocatedAmount.toFixed(2), "0.00", "USD", "PerformingRight"].join("\t") + "\n",
-  );
+  for (const country of countryRows) {
+    const summaryRow = summaryByCountry.get(country);
+    const detailTotals = detailTotalsByCountry.get(country);
+    const totalUsages = detailTotals?.usages ?? Number(summaryRow?.["partner_playbacks"] ?? 0);
+    const totalAllocatedAmount = detailTotals?.amount ?? Number(summaryRow?.["audio_royalties"] ?? 0);
+    const performingSummaryId = String(nextSummaryId);
+    const mechanicalSummaryId = String(nextSummaryId + 1);
+    nextSummaryId += 2;
+    summaryIdByCountry.set(country, { performing: performingSummaryId, mechanical: mechanicalSummaryId });
+
+    writers.ddexDsr.write(
+      [
+        "GSY09",
+        mechanicalSummaryId,
+        country,
+        "Usage-HardwareAudioTier-Music-All",
+        String(totalUsages),
+        String(totalUsages),
+        totalAllocatedAmount.toFixed(12),
+        "0.00",
+        "USD",
+        "MechanicalRight",
+      ].join("\t") + "\n",
+    );
+    writers.ddexDsr.write(
+      [
+        "GSY09",
+        performingSummaryId,
+        country,
+        "Usage-HardwareAudioTier-Music-All",
+        String(totalUsages),
+        String(totalUsages),
+        totalAllocatedAmount.toFixed(12),
+        "0.00",
+        "USD",
+        "PerformingRight",
+      ].join("\t") + "\n",
+    );
+  }
 
   for (const detail of detailRows) {
+    const summaryIds = summaryIdByCountry.get(detail.country);
+    if (!summaryIds) {
+      continue;
+    }
     const metadata = classifier.getMetadata(detail.assetId);
     const title = formatDdexText(detail.title || metadata.title);
     const displayArtistName = formatDdexText(
@@ -1060,26 +1132,26 @@ function writeDdexDsr(
     writers.ddexDsr.write(
       [
         "SR02",
-        performingSummaryId,
+        summaryIds.performing,
         ...commonFields,
         "PerformingRight",
         "0.000000",
-        detail.partnerRevenue.toFixed(6),
+        detail.partnerRevenue.toFixed(12),
       ].join("\t") + "\n",
     );
     writers.ddexDsr.write(
       [
         "SR02",
-        mechanicalSummaryId,
+        summaryIds.mechanical,
         ...commonFields,
         "MechanicalRight",
         "0.000000",
-        detail.partnerRevenue.toFixed(6),
+        detail.partnerRevenue.toFixed(12),
       ].join("\t") + "\n",
     );
   }
 
-  writers.ddexDsr.write(["SRFO", String((detailRows.length * 2) + 2), "2"].join("\t") + "\n");
+  writers.ddexDsr.write(["SRFO", String((detailRows.length * 2) + (countryRows.length * 2)), String(countryRows.length * 2)].join("\t") + "\n");
 }
 
 async function writeFinancialAdjustments(
@@ -1105,8 +1177,6 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
   const classifier = new AssetClassifier();
   const publishingUsageFallback = loadPublishingUsageCache();
   const publishingAssetIds = loadPublishingAssetIds();
-  const directSources = resolvePublishingDirectSources(config.publishingDir, config.yearMonth);
-  const directSourceResolution = getPublishingDirectSourceResolution(directSources);
 
   await classifier.initialize({
     neighboringDir: config.neighboringDir,
@@ -1122,42 +1192,7 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
         "[Publishing] --with-classification is enabled, but automatic Embedded/Cover classification is still kept out of the default settlement pipeline.",
       );
     }
-
-    // Direct publishing sources must come from the target-month API/export folder.
-    // Client sample workbooks are intentionally excluded from the settlement pipeline.
-    if (directSourceResolution.hasCompleteDirectSource) {
-      const writtenDailyRows = await writeDelimitedCsvSource(
-        directSources.dailyAdCsvPath!,
-        PUBLISHING_DAILY_AD_HEADERS,
-        writers.dailyAd,
-        "dailyAd",
-      );
-
-      const writtenAdjustmentRows = await writeDelimitedCsvSource(
-        directSources.adjustmentCsvPath!,
-        PUBLISHING_ADJUSTMENT_HEADERS,
-        writers.dailyAdAdjustment,
-        "adjustment",
-      );
-
-      const writtenMonthlyRows = await writeDelimitedCsvSource(
-        directSources.monthlyCsvPath!,
-        PUBLISHING_MONTHLY_HEADERS,
-        writers.monthlySubscription,
-        "monthly",
-      );
-
-      const writtenDdexRows = await writeDdexCsvSource(directSources.ddexCsvPath!, writers.ddexDsr);
-
-      console.log(
-        `[Publishing] Direct-source export completed. daily=${writtenDailyRows} (${directSourceResolution.dailySourcePath}) adjustment=${writtenAdjustmentRows} (${directSourceResolution.adjustmentSourcePath}) monthly=${writtenMonthlyRows} (${directSourceResolution.monthlySourcePath}) ddex=${writtenDdexRows} (${directSourceResolution.ddexSourcePath})`,
-      );
-      return;
-    }
-
-    console.warn(
-      `[Publishing] Complete target-month direct source not found in ${config.publishingDir}. Reconstructing from API reports only.`,
-    );
+    console.log(`[Publishing] API-only export for ${config.yearMonth} from ${config.systemManagedDir}`);
 
     // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
     // The missing piece is the classification layer that separates Embedded vs Cover and
@@ -1188,6 +1223,11 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       config.yearMonth,
       "music_content_owner_asset_red_revenue_raw_a1",
     );
+    const redAdjustmentFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "music_content_owner_asset_red_adjustment_revenue_raw_a1",
+    );
     const audioTierFiles = listMonthlySystemManagedFiles(
       config.systemManagedDir,
       config.yearMonth,
@@ -1203,16 +1243,11 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       financialFiles.length > 0 ||
         adjustmentFiles.length > 0 ||
         redFiles.length > 0 ||
+        redAdjustmentFiles.length > 0 ||
         audioTierFiles.length > 0 ||
         audioTierSummaryFiles.length > 0,
     );
-    const hasAnyPartialDirectSource = Boolean(
-      directSources.dailyAdCsvPath ||
-        directSources.adjustmentCsvPath ||
-        directSources.monthlyCsvPath ||
-        directSources.ddexCsvPath,
-    );
-    if (!hasAnyApiMonthlySource && !hasAnyPartialDirectSource) {
+    if (!hasAnyApiMonthlySource) {
       console.warn(
         `[Publishing] No API monthly source files found for ${config.yearMonth} in ${config.systemManagedDir}. Leaving publishing outputs header-only.`,
       );
@@ -1249,13 +1284,11 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     const financialMap = await parsePublishingFinancialFiles(financialFiles);
     const monthlyAdMap = buildMonthlyAdSummary(financialMap, usageByAsset, classifier, publishingAssetIds);
     const rawRedMap = await parseRedSummaryFiles(redFiles);
+    const rawRedAdjustmentMap = await parseRedSummaryFiles(redAdjustmentFiles);
     const monthlyRedMap = new Map<string, RedSummaryEntry>();
     monthlyRevenueMap.clear();
-    for (const [key, entry] of rawRedMap.entries()) {
-      if (!isPublishingRecord(classifier, publishingAssetIds, entry.assetId)) {
-        continue;
-      }
-      if (entry.adjustmentType !== "None") {
+    for (const [key, entry] of [...rawRedMap.entries(), ...rawRedAdjustmentMap.entries()]) {
+      if (!isPublishingRecord(classifier, publishingAssetIds, entry.assetId, entry.sourceCustomId)) {
         continue;
       }
       monthlyRedMap.set(key, entry);
@@ -1268,52 +1301,17 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       });
     }
     console.log(
-      `[Publishing] publishingAssetIds=${publishingAssetIds.size} financial=${financialMap.size} monthlyAd=${monthlyAdMap.size} rawRed=${rawRedMap.size} monthlyRed=${monthlyRedMap.size}`,
+      `[Publishing] publishingAssetIds=${publishingAssetIds.size} financial=${financialMap.size} monthlyAd=${monthlyAdMap.size} rawRed=${rawRedMap.size} rawRedAdjustment=${rawRedAdjustmentMap.size} monthlyRed=${monthlyRedMap.size}`,
     );
-    if (directSources.dailyAdCsvPath) {
-      const writtenDailyRows = await writeDelimitedCsvSource(
-        directSources.dailyAdCsvPath,
-        PUBLISHING_DAILY_AD_HEADERS,
-        writers.dailyAd,
-        "dailyAd",
-      );
-      console.log(`[Publishing] Wrote daily ad output from direct csv ${directSources.dailyAdCsvPath}. rows=${writtenDailyRows}`);
-    } else {
-      writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers);
-    }
+    writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers);
 
-    if (directSources.adjustmentCsvPath) {
-      const writtenAdjustmentRows = await writeDelimitedCsvSource(
-        directSources.adjustmentCsvPath,
-        PUBLISHING_ADJUSTMENT_HEADERS,
-        writers.dailyAdAdjustment,
-        "adjustment",
-      );
-      console.log(`[Publishing] Wrote daily adjustment output from direct csv ${directSources.adjustmentCsvPath}. rows=${writtenAdjustmentRows}`);
-    } else {
-      await writeFinancialAdjustments(adjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
-    }
+    await writeFinancialAdjustments(adjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
 
-    if (directSources.monthlyCsvPath) {
-      const writtenMonthlyRows = await writeDelimitedCsvSource(
-        directSources.monthlyCsvPath,
-        PUBLISHING_MONTHLY_HEADERS,
-        writers.monthlySubscription,
-        "monthly",
-      );
-      console.log(`[Publishing] Wrote monthly subscription output from direct csv ${directSources.monthlyCsvPath}. rows=${writtenMonthlyRows}`);
-    } else {
-      writeMonthlySummary(monthlyRedMap, config.yearMonth, classifier, publishingAssetIds, writers);
-    }
+    writeMonthlySummary(monthlyRedMap, config.yearMonth, classifier, publishingAssetIds, writers);
 
-    if (directSources.ddexCsvPath) {
-      const writtenDdexRows = await writeDdexCsvSource(directSources.ddexCsvPath, writers.ddexDsr);
-      console.log(`[Publishing] Wrote DDEX output from direct csv ${directSources.ddexCsvPath}. rows=${writtenDdexRows}`);
-    } else {
-      const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
-      const audioSummaryRow = await loadAudioTierSummaryRow(audioTierSummaryFiles, "KR");
-      writeDdexDsr(audioDetails, audioSummaryRow, classifier, writers, config.yearMonth);
-    }
+    const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
+    const audioSummaryRows = await loadAudioTierSummaryRows(audioTierSummaryFiles);
+    writeDdexDsr(audioDetails, audioSummaryRows, classifier, publishingAssetIds, writers, config.yearMonth);
     console.log(`[Publishing] Completed export for ${config.yearMonth} to ${config.outputDir}`);
   } finally {
     await closeWriters(Object.values(writers));

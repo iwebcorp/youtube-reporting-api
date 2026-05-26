@@ -5,14 +5,17 @@ import { NEIGHBORING_HEADERS, PUBLISHING_HEADERS } from "./constants.js";
 import type { NeighboringWriters, PublishingWriters } from "./types.js";
 import { ensureDirectory } from "./utils.js";
 
-function openEncodedWriter(filePath: string, initialContent?: string): NodeJS.WritableStream {
+type EncodedWriter = NodeJS.WritableStream & { __fileStream?: fs.WriteStream };
+
+function openEncodedWriter(filePath: string, initialContent?: string): EncodedWriter {
   const fileStream = fs.createWriteStream(filePath);
   const encoder = iconv.encodeStream("cp949");
   encoder.pipe(fileStream);
   if (initialContent) {
     encoder.write(initialContent);
   }
-  return encoder;
+  (encoder as EncodedWriter).__fileStream = fileStream;
+  return encoder as EncodedWriter;
 }
 
 function openCsvWriter(filePath: string, header: string): NodeJS.WritableStream {
@@ -60,8 +63,18 @@ export async function closeWriters(writers: NodeJS.WritableStream[]): Promise<vo
     writers.map(
       (writer) =>
         new Promise<void>((resolve, reject) => {
-          writer.once("error", reject);
-          writer.end(() => resolve());
+          const encodedWriter = writer as EncodedWriter;
+          const fileStream = encodedWriter.__fileStream;
+          const fail = (error: Error) => reject(error);
+          writer.once("error", fail);
+          fileStream?.once("error", fail);
+          writer.end(() => {
+            if (!fileStream) {
+              resolve();
+              return;
+            }
+            fileStream.once("finish", () => resolve());
+          });
         }),
     ),
   );

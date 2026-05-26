@@ -46,6 +46,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 function loadTargetAssetIds(): string[] {
+  const assetIdsFile = parseArgValue("--assetIdsFile=");
+  if (assetIdsFile) {
+    const filePath = path.resolve(process.cwd(), assetIdsFile);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`[AssetRelationships] Missing asset id file: ${filePath}`);
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error(`[AssetRelationships] Invalid asset id file: ${filePath}`);
+    }
+    return parsed.map((value) => String(value).trim()).filter(Boolean);
+  }
+
   const explicitAssetIds = parseArgValue("--assetIds=");
   if (explicitAssetIds) {
     return explicitAssetIds

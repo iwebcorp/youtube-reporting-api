@@ -2,11 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import type { AssetCategory, AssetMetadata, CsvRow } from "./types.js";
 import { parseCsvRows } from "./parsers.js";
-import { findFirstValue, loadJsonRecord, withMetadataFallbacks } from "./utils.js";
+import { clean, findFirstValue, loadJsonRecord, withMetadataFallbacks } from "./utils.js";
 
 export class AssetMetadataRepository {
   private readonly neighboringAssets = new Set<string>();
   private readonly publishingAssets = new Set<string>();
+  private readonly neighboringCustomIds = new Set<string>();
+  private readonly publishingCustomIds = new Set<string>();
   private readonly metadataMap = new Map<string, AssetMetadata>();
 
   public async initialize(options: {
@@ -27,6 +29,8 @@ export class AssetMetadataRepository {
     if (shouldRefresh) {
       this.neighboringAssets.clear();
       this.publishingAssets.clear();
+      this.neighboringCustomIds.clear();
+      this.publishingCustomIds.clear();
       this.metadataMap.clear();
       const neighboringDir = path.resolve(options.neighboringDir);
       const publishingDir = path.resolve(options.publishingDir);
@@ -66,6 +70,20 @@ export class AssetMetadataRepository {
     return "Unknown";
   }
 
+  public classifyCustomId(customId: string): AssetCategory {
+    const normalized = clean(customId);
+    if (!normalized) {
+      return "Unknown";
+    }
+    if (this.publishingCustomIds.has(normalized)) {
+      return "Publishing";
+    }
+    if (this.neighboringCustomIds.has(normalized)) {
+      return "Neighboring";
+    }
+    return "Unknown";
+  }
+
   public getMetadata(assetId: string): AssetMetadata {
     return this.metadataMap.get(assetId) ?? withMetadataFallbacks({ assetId });
   }
@@ -77,9 +95,15 @@ export class AssetMetadataRepository {
       this.metadataMap.set(assetId, normalized);
       if (normalized.sourceCategory === "Publishing") {
         this.publishingAssets.add(assetId);
+        if (normalized.customId) {
+          this.publishingCustomIds.add(normalized.customId);
+        }
       }
       if (normalized.sourceCategory === "Neighboring") {
         this.neighboringAssets.add(assetId);
+        if (normalized.customId) {
+          this.neighboringCustomIds.add(normalized.customId);
+        }
       }
       if (normalized.iswc || normalized.hfa || (normalized.writers && normalized.writers !== "Unidentified Writers" && !normalized.isrc)) {
         this.publishingAssets.add(assetId);
@@ -186,6 +210,11 @@ export class AssetMetadataRepository {
 
       const merged = this.mergeMetadata(assetId, row, category);
       this.metadataMap.set(assetId, merged);
+      if (category === "Neighboring" && merged.customId) {
+        this.neighboringCustomIds.add(merged.customId);
+      } else if (category === "Publishing" && merged.customId) {
+        this.publishingCustomIds.add(merged.customId);
+      }
     }
 
     console.log(`[Metadata] ${path.basename(filePath)} processed rows=${processedCount}`);
