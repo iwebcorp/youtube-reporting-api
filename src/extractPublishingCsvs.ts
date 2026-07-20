@@ -367,6 +367,22 @@ function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean 
   return firstDateToken.replace(/-/g, "").startsWith(yearMonth);
 }
 
+function listCsvFilesRecursive(directoryPath: string): string[] {
+  const entries = fs.readdirSync(directoryPath, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listCsvFilesRecursive(entryPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".csv")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
 function findDirectPublishingCsv(
   publishingDir: string,
   yearMonth: string,
@@ -376,18 +392,17 @@ function findDirectPublishingCsv(
     return null;
   }
 
-  const candidates = fs
-    .readdirSync(publishingDir)
-    .filter((fileName) => fileName.toLowerCase().endsWith(".csv"))
-    .filter((fileName) => fileNameMatchesYearMonth(fileName, yearMonth))
-    .filter(matcher)
-    .sort();
+  const candidates = listCsvFilesRecursive(publishingDir)
+    .map((filePath) => ({ filePath, fileName: path.basename(filePath) }))
+    .filter(({ fileName }) => fileNameMatchesYearMonth(fileName, yearMonth))
+    .filter(({ fileName }) => matcher(fileName))
+    .sort((left, right) => left.filePath.localeCompare(right.filePath));
 
   if (candidates.length === 0) {
     return null;
   }
 
-  return path.join(publishingDir, candidates[0]!);
+  return candidates[0]!.filePath;
 }
 
 function findPublishingDailyAdCsv(publishingDir: string, yearMonth: string): string | null {
@@ -418,7 +433,14 @@ function findPublishingDdexCsv(publishingDir: string, yearMonth: string): string
   return findDirectPublishingCsv(
     publishingDir,
     yearMonth,
-    (fileName) => fileName.startsWith("4.") && fileName.toLowerCase().includes("dsr_"),
+    (fileName) => {
+      const lowerName = fileName.toLowerCase();
+      return fileName.startsWith("4.") && (
+        lowerName.includes("dsr_") ||
+        lowerName.includes("hardwareaudiotierrevenue") ||
+        lowerName.includes("audio_tier")
+      );
+    },
   );
 }
 
@@ -702,6 +724,36 @@ function getPublishingDirectSourceResolution(directSources: PublishingDirectSour
   };
 }
 
+function writeDirectPublishingSourceFile(sourcePath: string, outputPath: string): number {
+  const normalizedText = decodeTextFile(sourcePath).replace(/\r\n/g, "\n");
+  const outputText = normalizedText.endsWith("\n") ? normalizedText : `${normalizedText}\n`;
+  fs.writeFileSync(outputPath, iconv.encode(outputText, "cp949"));
+  return outputText.split("\n").filter((line) => line.length > 0).length;
+}
+
+function writePublishingDirectSources(outputDir: string, resolution: PublishingDirectSourceResolution): void {
+  const sources = [
+    ["1_publishing_daily_ad.csv", resolution.dailySourcePath],
+    ["2_publishing_daily_ad_adj.csv", resolution.adjustmentSourcePath],
+    ["3_publishing_monthly_sub.csv", resolution.monthlySourcePath],
+    ["4_publishing_ddex_dsr.csv", resolution.ddexSourcePath],
+  ] as const;
+
+  if (!resolution.hasCompleteDirectSource) {
+    throw new Error("[Publishing] Direct source export requires all publishing source files 1-4.");
+  }
+
+  fs.mkdirSync(outputDir, { recursive: true });
+  for (const [fileName, sourcePath] of sources) {
+    if (!sourcePath) {
+      throw new Error(`[Publishing] Missing direct source for ${fileName}`);
+    }
+    const outputPath = path.join(outputDir, fileName);
+    const lineCount = writeDirectPublishingSourceFile(sourcePath, outputPath);
+    console.log(`[Publishing] Direct source ${sourcePath} -> ${outputPath} (${lineCount} lines)`);
+  }
+}
+
 function loadPublishingAssetIds(): Set<string> {
   const filePath = path.resolve(process.cwd(), "publishing_asset_ids.json");
   if (!fs.existsSync(filePath)) {
@@ -764,10 +816,11 @@ function buildMonthlyAdSummary(
   usageMap: Map<string, PublishingUsageCacheEntry>,
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
+  includeAllSourceRows = false,
 ): Map<string, MonthlyAdSummary> {
   const monthlyAdMap = new Map<string, MonthlyAdSummary>();
   for (const financial of financialMap.values()) {
-    if (!isPublishingRecord(classifier, publishingAssetIds, financial.assetId, financial.sourceCustomId)) {
+    if (!includeAllSourceRows && !isPublishingRecord(classifier, publishingAssetIds, financial.assetId, financial.sourceCustomId)) {
       continue;
     }
 
@@ -807,9 +860,10 @@ function writeAdjustmentRow(
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: PublishingWriters,
+  includeAllSourceRows = false,
 ): void {
   const assetId = row["asset_id"]?.trim() ?? "";
-  if (!assetId || !isPublishingRecord(classifier, publishingAssetIds, assetId, row["custom_id"]?.trim() ?? "")) {
+  if (!assetId || (!includeAllSourceRows && !isPublishingRecord(classifier, publishingAssetIds, assetId, row["custom_id"]?.trim() ?? ""))) {
     return;
   }
 
@@ -861,10 +915,11 @@ function writeMonthlyAdSummary(
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: PublishingWriters,
+  includeAllSourceRows = false,
 ): void {
   for (const summary of monthlyAdMap.values()) {
     const metadata = classifier.getMetadata(summary.assetId);
-    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
+    if (!includeAllSourceRows && !isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
       continue;
     }
     const totalViews = summary.views;
@@ -931,9 +986,10 @@ function writeMonthlySummary(
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: PublishingWriters,
+  includeAllSourceRows = false,
 ): void {
   for (const summary of redMap.values()) {
-    if (!isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
+    if (!includeAllSourceRows && !isPublishingRecord(classifier, publishingAssetIds, summary.assetId, summary.sourceCustomId)) {
       continue;
     }
 
@@ -997,7 +1053,10 @@ function writeDdexDsr(
   yearMonth: string,
 ): void {
   const startDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-01`;
-  const endDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-31`;
+  const year = Number(yearMonth.slice(0, 4));
+  const month = Number(yearMonth.slice(4, 6));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const endDate = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}-${String(lastDay).padStart(2, "0")}`;
   const createdAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const messageId = String(Date.now()).slice(-8);
   const detailRows = details
@@ -1160,12 +1219,13 @@ async function writeFinancialAdjustments(
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   writers: PublishingWriters,
+  includeAllSourceRows = false,
 ): Promise<void> {
   for (const filePath of filePaths) {
     console.log(`[PublishingAdjustment] Parsing ${filePath}`);
     const rows = await parseCsvRows(filePath);
     for (const row of rows) {
-      writeAdjustmentRow(row, yearMonth, classifier, publishingAssetIds, writers);
+      writeAdjustmentRow(row, yearMonth, classifier, publishingAssetIds, writers, includeAllSourceRows);
     }
   }
 }
@@ -1173,6 +1233,16 @@ async function writeFinancialAdjustments(
 export async function runPublishingExtraction(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const cliOptions = parseCliArgs(cliArgs);
   const config = resolveExtractionConfig(cliOptions);
+  const directSources = resolvePublishingDirectSources(config.publishingDir, config.yearMonth);
+  const directSourceResolution = getPublishingDirectSourceResolution(directSources);
+  if (directSourceResolution.hasCompleteDirectSource) {
+    console.log(`[Publishing] Complete direct source set found in ${config.publishingDir}. Using source files for ${config.yearMonth}.`);
+    writePublishingDirectSources(config.outputDir, directSourceResolution);
+    console.log(`[Publishing] Completed direct source export for ${config.yearMonth} to ${config.outputDir}`);
+    return;
+  }
+  console.log(`[Publishing] No complete direct source set found in ${config.publishingDir}. Falling back to API export for ${config.yearMonth}.`);
+
   const withClassification = cliOptions.withClassification === true;
   const classifier = new AssetClassifier();
   const publishingUsageFallback = loadPublishingUsageCache();
@@ -1192,7 +1262,8 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
         "[Publishing] --with-classification is enabled, but automatic Embedded/Cover classification is still kept out of the default settlement pipeline.",
       );
     }
-    console.log(`[Publishing] API-only export for ${config.yearMonth} from ${config.systemManagedDir}`);
+    console.log(`[Publishing] API-only export for ${config.yearMonth} from ${config.publishingSystemManagedDir}`);
+    const isDedicatedPublisherSource = config.publishingSystemManagedDir !== config.systemManagedDir;
 
     // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
     // The missing piece is the classification layer that separates Embedded vs Cover and
@@ -1209,24 +1280,24 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     const monthlyRevenueMap = new Map<string, MonthlySummaryEntry>();
     const usageFiles = groups.flatMap((group) => group.usageFiles);
     const financialFiles = listMonthlySystemManagedFiles(
-      config.systemManagedDir,
+      config.publishingSystemManagedDir,
       config.yearMonth,
       "content_owner_asset_ad_revenue_raw_a1",
     );
     const adjustmentFiles = listMonthlySystemManagedFiles(
-      config.systemManagedDir,
+      config.publishingSystemManagedDir,
       config.yearMonth,
       "content_owner_asset_ad_adjustment_revenue_raw_a1",
     );
     const redFiles = listMonthlySystemManagedFiles(
-      config.systemManagedDir,
+      config.publishingSystemManagedDir,
       config.yearMonth,
-      "music_content_owner_asset_red_revenue_raw_a1",
+      "publisher_content_owner_music_asset_red_revenue_raw_a1",
     );
     const redAdjustmentFiles = listMonthlySystemManagedFiles(
-      config.systemManagedDir,
+      config.publishingSystemManagedDir,
       config.yearMonth,
-      "music_content_owner_asset_red_adjustment_revenue_raw_a1",
+      "publisher_content_owner_asset_red_adjustment_revenue_raw_a1",
     );
     const audioTierFiles = listMonthlySystemManagedFiles(
       config.systemManagedDir,
@@ -1282,13 +1353,19 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     }
 
     const financialMap = await parsePublishingFinancialFiles(financialFiles);
-    const monthlyAdMap = buildMonthlyAdSummary(financialMap, usageByAsset, classifier, publishingAssetIds);
+    const monthlyAdMap = buildMonthlyAdSummary(
+      financialMap,
+      usageByAsset,
+      classifier,
+      publishingAssetIds,
+      isDedicatedPublisherSource,
+    );
     const rawRedMap = await parseRedSummaryFiles(redFiles);
     const rawRedAdjustmentMap = await parseRedSummaryFiles(redAdjustmentFiles);
     const monthlyRedMap = new Map<string, RedSummaryEntry>();
     monthlyRevenueMap.clear();
     for (const [key, entry] of [...rawRedMap.entries(), ...rawRedAdjustmentMap.entries()]) {
-      if (!isPublishingRecord(classifier, publishingAssetIds, entry.assetId, entry.sourceCustomId)) {
+      if (!isDedicatedPublisherSource && !isPublishingRecord(classifier, publishingAssetIds, entry.assetId, entry.sourceCustomId)) {
         continue;
       }
       monthlyRedMap.set(key, entry);
@@ -1303,15 +1380,36 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     console.log(
       `[Publishing] publishingAssetIds=${publishingAssetIds.size} financial=${financialMap.size} monthlyAd=${monthlyAdMap.size} rawRed=${rawRedMap.size} rawRedAdjustment=${rawRedAdjustmentMap.size} monthlyRed=${monthlyRedMap.size}`,
     );
-    writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers);
+    writeMonthlyAdSummary(monthlyAdMap, classifier, publishingAssetIds, writers, isDedicatedPublisherSource);
 
-    await writeFinancialAdjustments(adjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
+    await writeFinancialAdjustments(
+      adjustmentFiles,
+      config.yearMonth,
+      classifier,
+      publishingAssetIds,
+      writers,
+      isDedicatedPublisherSource,
+    );
 
-    writeMonthlySummary(monthlyRedMap, config.yearMonth, classifier, publishingAssetIds, writers);
+    writeMonthlySummary(
+      monthlyRedMap,
+      config.yearMonth,
+      classifier,
+      publishingAssetIds,
+      writers,
+      isDedicatedPublisherSource,
+    );
 
     const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
     const audioSummaryRows = await loadAudioTierSummaryRows(audioTierSummaryFiles);
-    writeDdexDsr(audioDetails, audioSummaryRows, classifier, publishingAssetIds, writers, config.yearMonth);
+    const audioPublishingAssetIds = isDedicatedPublisherSource
+      ? new Set([
+          ...Array.from(financialMap.values(), (entry) => entry.assetId),
+          ...Array.from(rawRedMap.values(), (entry) => entry.assetId),
+          ...Array.from(rawRedAdjustmentMap.values(), (entry) => entry.assetId),
+        ])
+      : publishingAssetIds;
+    writeDdexDsr(audioDetails, audioSummaryRows, classifier, audioPublishingAssetIds, writers, config.yearMonth);
     console.log(`[Publishing] Completed export for ${config.yearMonth} to ${config.outputDir}`);
   } finally {
     await closeWriters(Object.values(writers));

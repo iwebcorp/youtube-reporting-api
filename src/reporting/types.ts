@@ -29,6 +29,7 @@ export interface ExtractionCliOptions {
   publishingDir?: string;
   cacheFile?: string;
   systemManagedDir?: string;
+  publishingSystemManagedDir?: string;
   sampleDir?: string;
   withClassification?: boolean;
 }
@@ -41,6 +42,7 @@ export interface ExtractionConfig {
   publishingDir: string;
   cacheFile: string;
   systemManagedDir: string;
+  publishingSystemManagedDir: string;
   sampleDir: string;
 }
 

@@ -72,6 +72,9 @@ export function parseCliArgs(argv: string[]): ExtractionCliOptions {
       case "systemManagedDir":
         options.systemManagedDir = value;
         break;
+      case "publishingSystemManagedDir":
+        options.publishingSystemManagedDir = value;
+        break;
       case "sampleDir":
         options.sampleDir = value;
         break;
@@ -107,6 +110,10 @@ export function resolveExtractionConfig(cliOptions: ExtractionCliOptions): Extra
     systemManagedDir: path.resolve(
       process.cwd(),
       clean(cliOptions.systemManagedDir ?? path.join(appConfig.reportDir, "system-managed")),
+    ),
+    publishingSystemManagedDir: path.resolve(
+      process.cwd(),
+      clean(cliOptions.publishingSystemManagedDir ?? cliOptions.systemManagedDir ?? path.join(appConfig.reportDir, "system-managed")),
     ),
     sampleDir: path.resolve(process.cwd(), clean(cliOptions.sampleDir ?? "2026415샘플")),
   };

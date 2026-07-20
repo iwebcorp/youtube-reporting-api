@@ -29,6 +29,11 @@ function parseReportTypeIds(argv: string[]): string[] {
   return explicit.length > 0 ? explicit : DEFAULT_REPORT_TYPES;
 }
 
+function parseContentOwnerId(argv: string[], fallback: string): string {
+  const argument = argv.find((value) => value.startsWith("--contentOwnerId="));
+  return argument ? clean(argument.slice("--contentOwnerId=".length)) : fallback;
+}
+
 function toMonthDateRange(yearMonth: string): { start: Date; end: Date } {
   const year = Number(yearMonth.slice(0, 4));
   const monthIndex = Number(yearMonth.slice(4, 6)) - 1;
@@ -138,14 +143,20 @@ async function withRetries<T>(
 }
 
 async function run(): Promise<void> {
-  const config = resolveExtractionConfig(parseCliArgs(process.argv.slice(2)));
-  const reportTypeIds = parseReportTypeIds(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const extractionArgv = argv.filter(
+    (argument) => !argument.startsWith("--contentOwnerId=") && !argument.startsWith("--reportTypeIds="),
+  );
+  const config = resolveExtractionConfig(parseCliArgs(extractionArgv));
+  const reportTypeIds = parseReportTypeIds(argv);
   const cfg = loadConfig();
+  const contentOwnerId = parseContentOwnerId(argv, cfg.contentOwnerId);
   const auth = await getAuthClient();
   const yt = google.youtubereporting({ version: "v1", auth });
 
   ensureDirectory(config.systemManagedDir);
   console.log(`[SystemManaged] yearMonth=${config.yearMonth} dir=${config.systemManagedDir}`);
+  console.log(`[SystemManaged] contentOwnerId=${contentOwnerId}`);
   console.log(`[SystemManaged] target report types: ${reportTypeIds.join(", ")}`);
 
   let pageToken: string | undefined;
@@ -153,7 +164,7 @@ async function run(): Promise<void> {
   do {
     const response = await withRetries("jobs.list", MAX_API_ATTEMPTS, () =>
       yt.jobs.list({
-        onBehalfOfContentOwner: cfg.contentOwnerId,
+        onBehalfOfContentOwner: contentOwnerId,
         includeSystemManaged: true,
         ...(pageToken ? { pageToken } : {}),
       }),
@@ -175,7 +186,7 @@ async function run(): Promise<void> {
     do {
       const response = await withRetries(`jobs.reports.list:${job.id}`, MAX_API_ATTEMPTS, () =>
         yt.jobs.reports.list({
-          onBehalfOfContentOwner: cfg.contentOwnerId,
+          onBehalfOfContentOwner: contentOwnerId,
           jobId: job.id,
           ...(reportPageToken ? { pageToken: reportPageToken } : {}),
         }),

@@ -76,7 +76,7 @@ async function inspectFile(
     rowCount += 1;
 
     if (fileName === "4_publishing_ddex_dsr.csv") {
-      if (lineIndex === 1) {
+      if (lineIndex === 2) {
         header = splitLine(line, delimiter);
       }
     } else if ((fileName === "3_neighboring_monthly_sub.csv" || fileName === "3_publishing_monthly_sub.csv") && lineIndex === 2) {
@@ -113,7 +113,7 @@ async function validateOutput(outputDir: string): Promise<FileValidationSummary[
     }
 
     const sampleDelimiter: "," | "\t" = mapping.fileName === "4_publishing_ddex_dsr.csv" ? "\t" : ",";
-    const outputDelimiter: "," | "\t" = ",";
+    const outputDelimiter: "," | "\t" = mapping.fileName === "4_publishing_ddex_dsr.csv" ? "\t" : ",";
     const sampleInfo = await inspectFile(mapping.samplePath, sampleDelimiter, mapping.fileName);
     const outputInfo = await inspectFile(outputPath, outputDelimiter, mapping.fileName);
 

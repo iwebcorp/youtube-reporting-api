@@ -13,6 +13,7 @@ function buildForwardArgs(config: ReturnType<typeof resolveExtractionConfig>): s
     `--publishingDir=${config.publishingDir}`,
     `--cacheFile=${config.cacheFile}`,
     `--systemManagedDir=${config.systemManagedDir}`,
+    `--publishingSystemManagedDir=${config.publishingSystemManagedDir}`,
     `--sampleDir=${config.sampleDir}`,
   ];
 }
@@ -29,7 +30,9 @@ async function run(): Promise<void> {
   await runPublishingShortsSummary(forwardArgs);
   await runSettlementValidation(forwardArgs);
 
-  console.log(`[ClientPackage] Completed. Generated and validated 9 client-facing files for ${config.yearMonth}.`);
+  console.log(
+    `[ClientPackage] Completed. Generated package and passed settlement validation for ${config.yearMonth}.`,
+  );
 }
 
 run().catch((error) => {

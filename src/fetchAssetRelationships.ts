@@ -224,6 +224,11 @@ async function run(): Promise<void> {
 
   let processed = 0;
   for (const assetId of assetIds) {
+    if (cache[assetId]) {
+      processed += 1;
+      continue;
+    }
+
     try {
       const relations = await fetchRelationshipsForAsset(auth, cfg.contentOwnerId, assetId);
       cache[assetId] = await buildCacheEntry(auth, cfg.contentOwnerId, assetId, relations);

@@ -94,25 +94,31 @@ async function sumDdexAudioTier(filePath: string): Promise<number> {
     return 0;
   }
 
+  const firstLine = fs.readFileSync(filePath, "utf-8").split(/\r?\n/, 1)[0] ?? "";
+  if (firstLine.includes("Partner Revenue")) {
+    return sumPartnerRevenueCsv(filePath);
+  }
+
   const rl = readline.createInterface({
     input: fs.createReadStream(filePath),
     crlfDelay: Infinity,
   });
 
-  let total = 0;
+  let detailTotal = 0;
+  let detailRows = 0;
+  let summaryTotal = 0;
   for await (const rawLine of rl) {
     const line = rawLine.replace(/^\uFEFF/, "").replace(/\r$/, "");
-    if (!line.startsWith("GSY09\t")) {
-      continue;
+    if (line.startsWith("SR02\t")) {
+      const values = parseDelimitedLine(line, "\t");
+      detailTotal += Number(values[20] ?? 0);
+      detailRows += 1;
+    } else if (line.startsWith("GSY09\t")) {
+      const values = parseDelimitedLine(line, "\t");
+      summaryTotal += Number(values[6] ?? 0);
     }
-    const values = parseDelimitedLine(line, "\t");
-    const rightsType = values[9] ?? "";
-    if (rightsType !== "MechanicalRight") {
-      continue;
-    }
-    total += Number(values[6] ?? 0);
   }
-  return total;
+  return detailRows > 0 ? detailTotal : summaryTotal;
 }
 
 export async function runSettlementValidation(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
