@@ -102,7 +102,6 @@ export interface PublishingWriters {
   dailyAd: NodeJS.WritableStream;
   dailyAdAdjustment: NodeJS.WritableStream;
   monthlySubscription: NodeJS.WritableStream;
-  ddexDsr: NodeJS.WritableStream;
 }
 
 export interface NeighboringUsageCacheEntry {

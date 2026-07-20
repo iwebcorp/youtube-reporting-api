@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as readline from "readline";
 import { pathToFileURL } from "url";
 import iconv from "iconv-lite";
 import { sumApiSettlementTotal } from "./extractApiSettlementSummary.js";
@@ -72,10 +71,11 @@ async function sumShortsSummary(filePath: string): Promise<number> {
 
   const text = iconv.decode(fs.readFileSync(filePath), "cp949").replace(/\r\n/g, "\n");
   const lines = text.split("\n").filter((line) => line.length > 0);
-  if (lines.length === 0) {
+  const firstLine = lines[0];
+  if (!firstLine) {
     return 0;
   }
-  const header = parseDelimitedLine(lines[0].replace(/^\uFEFF/, ""), ",").map((value) => value.trim());
+  const header = parseDelimitedLine(firstLine.replace(/^\uFEFF/, ""), ",").map((value) => value.trim());
   const headerIndex = header.findIndex((value) => value === "Shorts Flat Fee Revenue USD");
   if (headerIndex < 0) {
     return 0;
@@ -87,38 +87,6 @@ async function sumShortsSummary(filePath: string): Promise<number> {
     total += Number(values[headerIndex] ?? 0);
   }
   return total;
-}
-
-async function sumDdexAudioTier(filePath: string): Promise<number> {
-  if (!fs.existsSync(filePath)) {
-    return 0;
-  }
-
-  const firstLine = fs.readFileSync(filePath, "utf-8").split(/\r?\n/, 1)[0] ?? "";
-  if (firstLine.includes("Partner Revenue")) {
-    return sumPartnerRevenueCsv(filePath);
-  }
-
-  const rl = readline.createInterface({
-    input: fs.createReadStream(filePath),
-    crlfDelay: Infinity,
-  });
-
-  let detailTotal = 0;
-  let detailRows = 0;
-  let summaryTotal = 0;
-  for await (const rawLine of rl) {
-    const line = rawLine.replace(/^\uFEFF/, "").replace(/\r$/, "");
-    if (line.startsWith("SR02\t")) {
-      const values = parseDelimitedLine(line, "\t");
-      detailTotal += Number(values[20] ?? 0);
-      detailRows += 1;
-    } else if (line.startsWith("GSY09\t")) {
-      const values = parseDelimitedLine(line, "\t");
-      summaryTotal += Number(values[6] ?? 0);
-    }
-  }
-  return detailRows > 0 ? detailTotal : summaryTotal;
 }
 
 export async function runSettlementValidation(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
@@ -133,7 +101,6 @@ export async function runSettlementValidation(cliArgs: string[] = process.argv.s
     neighboringMonthlySub: await sumPartnerRevenueCsv(path.join(outputDir, "3_neighboring_monthly_sub.csv")),
     publishingMonthlySub: await sumPartnerRevenueCsv(path.join(outputDir, "3_publishing_monthly_sub.csv")),
     neighboringFinancial: await sumPartnerRevenueCsv(path.join(outputDir, "4_neighboring_financial_detail.csv")),
-    publishingDdex: await sumDdexAudioTier(path.join(outputDir, "4_publishing_ddex_dsr.csv")),
     publishingShorts: await sumShortsSummary(path.join(outputDir, "5_publishing_shorts_revenue_summary.csv")),
   };
 
@@ -146,8 +113,7 @@ export async function runSettlementValidation(cliArgs: string[] = process.argv.s
   const publishingReferenceTotal =
     fileSums.publishingDailyAd +
     fileSums.publishingDailyAdj +
-    fileSums.publishingMonthlySub +
-    fileSums.publishingDdex;
+    fileSums.publishingMonthlySub;
   const apiTotal = await sumApiSettlementTotal(config.yearMonth, config.systemManagedDir);
   const difference = mainPackageTotal - apiTotal;
 

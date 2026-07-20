@@ -42,14 +42,6 @@ const FILE_MAPPINGS = [
     fileName: "3_publishing_monthly_sub.csv",
     samplePath: path.join(process.cwd(), "저작", "3.YouTube_kwangsoomedia_pla_M_20260101_20260131_red_pubs_rawdata_asset_v1-1.csv"),
   },
-  {
-    fileName: "4_publishing_ddex_dsr.csv",
-    samplePath: path.join(
-      process.cwd(),
-      "저작",
-      "4.DSR_kwangsoomedia-pla_YouTube_Usage-HardwareAudioTier-Combined-All_2026-01_KR_1of1_20260204T222226.csv",
-    ),
-  },
 ] as const;
 
 function splitLine(line: string, delimiter: "," | "\t"): string[] {
@@ -75,11 +67,7 @@ async function inspectFile(
     lineIndex += 1;
     rowCount += 1;
 
-    if (fileName === "4_publishing_ddex_dsr.csv") {
-      if (lineIndex === 2) {
-        header = splitLine(line, delimiter);
-      }
-    } else if ((fileName === "3_neighboring_monthly_sub.csv" || fileName === "3_publishing_monthly_sub.csv") && lineIndex === 2) {
+    if ((fileName === "3_neighboring_monthly_sub.csv" || fileName === "3_publishing_monthly_sub.csv") && lineIndex === 2) {
       header = splitLine(line, delimiter);
     } else if (lineIndex === 1 && fileName !== "3_neighboring_monthly_sub.csv" && fileName !== "3_publishing_monthly_sub.csv") {
       header = splitLine(line, delimiter);
@@ -112,10 +100,8 @@ async function validateOutput(outputDir: string): Promise<FileValidationSummary[
       throw new Error(`[Validate] Missing output file: ${outputPath}`);
     }
 
-    const sampleDelimiter: "," | "\t" = mapping.fileName === "4_publishing_ddex_dsr.csv" ? "\t" : ",";
-    const outputDelimiter: "," | "\t" = mapping.fileName === "4_publishing_ddex_dsr.csv" ? "\t" : ",";
-    const sampleInfo = await inspectFile(mapping.samplePath, sampleDelimiter, mapping.fileName);
-    const outputInfo = await inspectFile(outputPath, outputDelimiter, mapping.fileName);
+    const sampleInfo = await inspectFile(mapping.samplePath, ",", mapping.fileName);
+    const outputInfo = await inspectFile(outputPath, ",", mapping.fileName);
 
     summaries.push({
       fileName: mapping.fileName,

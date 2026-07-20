@@ -31,7 +31,7 @@ async function run(): Promise<void> {
   await runSettlementValidation(forwardArgs);
 
   console.log(
-    `[ClientPackage] Completed. Generated package and passed settlement validation for ${config.yearMonth}.`,
+    `[ClientPackage] Completed. Generated 8-file package and passed settlement validation for ${config.yearMonth}.`,
   );
 }
 

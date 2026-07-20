@@ -1,3 +1,4 @@
+// PLA Payment Summary와 음악 상세의 차액으로 GE 총액을 생성하는 실행기
 import * as fs from "fs";
 import * as path from "path";
 import iconv from "iconv-lite";
@@ -16,7 +17,6 @@ async function run(): Promise<void> {
     config.yearMonth,
     "publisher_content_owner_music_asset_red_revenue_raw_a1",
   );
-
   if (paymentFiles.length === 0 || detailFiles.length === 0) {
     throw new Error(`[PublishingGE] Missing payments summary or publisher music detail for ${config.yearMonth}`);
   }

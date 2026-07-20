@@ -22,10 +22,6 @@ function openCsvWriter(filePath: string, header: string): NodeJS.WritableStream 
   return openEncodedWriter(filePath, header);
 }
 
-function openTextWriter(filePath: string): NodeJS.WritableStream {
-  return openEncodedWriter(filePath);
-}
-
 export function createNeighboringWriters(outputDir: string): NeighboringWriters {
   ensureDirectory(outputDir);
   return {
@@ -54,7 +50,6 @@ export function createPublishingWriters(outputDir: string): PublishingWriters {
       path.join(outputDir, "3_publishing_monthly_sub.csv"),
       PUBLISHING_HEADERS.monthlySubscription,
     ),
-    ddexDsr: openTextWriter(path.join(outputDir, "4_publishing_ddex_dsr.csv")),
   };
 }
 
