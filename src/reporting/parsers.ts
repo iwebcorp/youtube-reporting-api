@@ -10,7 +10,7 @@ import type {
   UsageRecord,
   UsageVideoRecord,
 } from "./types.js";
-import { findFirstValue, parseNumber } from "./utils.js";
+import { clean, findFirstValue, normalizeHeader, parseNumber } from "./utils.js";
 
 function scoreDecodedText(text: string): number {
   const hangulMatches = text.match(/[가-힣]/g)?.length ?? 0;
@@ -170,10 +170,55 @@ export async function buildPublishingUsageCacheFromReports(filePaths: string[]) 
 
   for (const filePath of filePaths) {
     console.log(`[PublishingUsage] Parsing ${filePath}`);
-    for await (const row of createCsvStream(filePath, "utf-8")) {
-      const assetId = findFirstValue(row, ["asset id"]);
+    const rows = fs.createReadStream(filePath).pipe(
+      parse({
+        delimiter: ",",
+        columns: false,
+        skip_empty_lines: true,
+        relax_column_count: true,
+        trim: true,
+        bom: true,
+      }),
+    ) as AsyncIterable<string[]>;
+    let columnIndexes:
+      | {
+          assetId: number;
+          country: number;
+          views: number;
+          redViews: number;
+          playbackLocationType: number;
+          liveOrOnDemand: number;
+        }
+      | undefined;
+
+    for await (const values of rows) {
+      if (!columnIndexes) {
+        const normalizedHeaders = values.map(normalizeHeader);
+        const findColumnIndex = (aliases: string[]) => {
+          const normalizedAliases = aliases.map(normalizeHeader);
+          return normalizedHeaders.findIndex((header) => normalizedAliases.includes(header));
+        };
+        const resolvedIndexes = {
+          assetId: findColumnIndex(["asset id"]),
+          country: findColumnIndex(["country code", "country"]),
+          views: findColumnIndex(["views"]),
+          redViews: findColumnIndex(["red views"]),
+          playbackLocationType: findColumnIndex(["playback location type"]),
+          liveOrOnDemand: findColumnIndex(["live or on demand"]),
+        };
+        const missingColumns = Object.entries(resolvedIndexes)
+          .filter(([, index]) => index < 0)
+          .map(([name]) => name);
+        if (missingColumns.length > 0) {
+          throw new Error(`[PublishingUsage] Missing required columns in ${filePath}: ${missingColumns.join(", ")}`);
+        }
+        columnIndexes = resolvedIndexes;
+        continue;
+      }
+
+      const assetId = clean(values[columnIndexes.assetId]);
       if (!assetId) continue;
-      const country = findFirstValue(row, ["country code", "country"]) || "XX";
+      const country = clean(values[columnIndexes.country]) || "XX";
       const key = `${assetId}|${country}`;
 
       const entry = aggregated.get(key) ?? {
@@ -186,10 +231,10 @@ export async function buildPublishingUsageCacheFromReports(filePaths: string[]) 
         adEnabledViews: 0,
       };
 
-      const views = parseNumber(findFirstValue(row, ["views"]), `${filePath} asset=${assetId} views`);
-      const redViews = parseNumber(findFirstValue(row, ["red views"]), `${filePath} asset=${assetId} red views`);
-      const playbackBucket = mapPlaybackLocationToBucket(findFirstValue(row, ["playback location type"]));
-      const liveOrOnDemand = findFirstValue(row, ["live or on demand"]).trim().toUpperCase();
+      const views = parseNumber(clean(values[columnIndexes.views]), `${filePath} asset=${assetId} views`);
+      const redViews = parseNumber(clean(values[columnIndexes.redViews]), `${filePath} asset=${assetId} red views`);
+      const playbackBucket = mapPlaybackLocationToBucket(clean(values[columnIndexes.playbackLocationType]));
+      const liveOrOnDemand = clean(values[columnIndexes.liveOrOnDemand]).trim().toUpperCase();
 
       entry.totalViews += views;
       entry.adEnabledViews += Math.max(0, views - redViews);
@@ -200,6 +245,10 @@ export async function buildPublishingUsageCacheFromReports(filePaths: string[]) 
       if (liveOrOnDemand === "ON_DEMAND") entry.onDemandViews += views;
 
       aggregated.set(key, entry);
+    }
+
+    if (!columnIndexes) {
+      throw new Error(`[PublishingUsage] Missing required header row in ${filePath}`);
     }
   }
 
