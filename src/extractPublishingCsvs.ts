@@ -904,14 +904,16 @@ function writeMonthlySummary(
     }
 
     const metadata = classifier.getMetadata(summary.assetId);
+    const title = summary.sourceTitle || metadata.title;
+    const customId = summary.sourceCustomId || metadata.customId;
     const row = [
       summary.adjustmentType,
       yearMonth,
       summary.country,
       summary.assetId,
-      csvEscape(metadata.title),
+      csvEscape(title),
       "",
-      metadata.customId,
+      customId,
       metadata.isrc,
       metadata.iswc,
       metadata.hfa,
