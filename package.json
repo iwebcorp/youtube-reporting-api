@@ -17,6 +17,7 @@
     "extract-publishing-ge": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractPublishingGeSummary.ts",
     "monthly-settlement": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/runMonthlySettlement.ts",
     "extract-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractShortsSongData.ts",
+    "enrich-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/enrichShortsSongData.ts",
     "export-client-api-samples": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/exportClientApiSourceSamples.ts",
     "validate-settlement-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/validateSettlementPackage.ts",
     "add-custom-id-to-reports": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/addCustomIdToReports.ts",

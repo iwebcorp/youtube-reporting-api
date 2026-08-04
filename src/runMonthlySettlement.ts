@@ -1,4 +1,4 @@
-// 대상 월 하나로 API 다운로드부터 8개 정산 파일과 GE 요약까지 실행하는 월별 실행기
+// 대상 월 하나로 API 다운로드부터 9개 전달 파일과 GE 요약까지 실행하는 월별 실행기
 import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
@@ -6,6 +6,8 @@ import { createInterface } from "readline/promises";
 
 const GENERAL_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 const PLA_CONTENT_OWNER_ID = "C9wllE5I6sRtJdunaUAdqQ";
+const ASSET_METADATA_REPORT_TYPE = "content_owner_asset_a3";
+const SHORTS_VIDEO_FILE = "6_shorts_video_usage_detail.csv";
 const PLA_REPORT_TYPES = [
   "content_owner_asset_ad_revenue_raw_a1",
   "content_owner_asset_ad_adjustment_revenue_raw_a1",
@@ -22,6 +24,7 @@ const PACKAGE_FILES = [
   "3_publishing_monthly_sub.csv",
   "4_neighboring_financial_detail.csv",
   "5_publishing_shorts_revenue_summary.csv",
+  SHORTS_VIDEO_FILE,
 ];
 
 function isValidYearMonth(value: string): boolean {
@@ -87,32 +90,65 @@ function verifyOutputs(packageDir: string, geDir: string): void {
   }
 }
 
+function findLatestAssetMetadataFile(directoryPath: string, yearMonth: string): string {
+  const prefix = `${yearMonth}_${ASSET_METADATA_REPORT_TYPE}_`;
+  const files = fs
+    .readdirSync(directoryPath)
+    .filter((fileName) => fileName.startsWith(prefix) && fileName.endsWith(".csv"))
+    .sort((left, right) => right.localeCompare(left));
+  const latestFile = files[0];
+  if (!latestFile) {
+    throw new Error(`[MonthlySettlement] Missing asset metadata snapshot for ${yearMonth}: ${directoryPath}`);
+  }
+  return path.join(directoryPath, latestFile);
+}
+
 async function run(): Promise<void> {
   const yearMonth = await resolveYearMonth(process.argv.slice(2));
-  const packageDir = `reports_final_${yearMonth}_client_pla_8files`;
+  const packageDir = `reports_final_${yearMonth}_client_pla_9files`;
   const geDir = `reports_final_${yearMonth}_publishing_ge`;
+  const assetMetadataDir = "reports/system-managed-assets";
+  const shortsRawDir = `reports/shorts-usage-${yearMonth}`;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
 
-  await runTsxStep("1/5 일별 raw data 다운로드", "src/getReports.ts", [commonMonthArg, "--reportDir=reports"]);
-  await runTsxStep("2/5 일반 system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
+  await runTsxStep("1/8 일별 raw data 다운로드", "src/getReports.ts", [commonMonthArg, "--reportDir=reports"]);
+  await runTsxStep("2/8 일반 system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
     commonMonthArg,
     `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
     "--systemManagedDir=reports/system-managed",
   ]);
-  await runTsxStep("3/5 PLA system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
+  await runTsxStep("3/8 자산 메타데이터 월말 스냅샷 다운로드", "src/downloadSystemManagedReports.ts", [
+    commonMonthArg,
+    `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
+    `--systemManagedDir=${assetMetadataDir}`,
+    `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
+    "--latestOnly",
+  ]);
+  await runTsxStep("4/8 PLA system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
     commonMonthArg,
     `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
     "--systemManagedDir=reports/system-managed-pla",
     `--reportTypeIds=${PLA_REPORT_TYPES.join(",")}`,
   ]);
-  await runTsxStep("4/5 8개 정산 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
+  await runTsxStep("5/8 8개 정산 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
     commonMonthArg,
     "--reportDir=reports",
     "--systemManagedDir=reports/system-managed",
     "--publishingSystemManagedDir=reports/system-managed-pla",
     `--outputDir=${packageDir}`,
   ]);
-  await runTsxStep("5/5 GE 총액 요약 생성", "src/extractPublishingGeSummary.ts", [
+  await runTsxStep("6/8 Shorts Video Usage 생성", "src/extractShortsSongData.ts", [
+    commonMonthArg,
+    "--reportDir=reports",
+    `--outputDir=${shortsRawDir}`,
+  ]);
+  const assetMetadataFile = findLatestAssetMetadataFile(assetMetadataDir, yearMonth);
+  await runTsxStep("7/8 Shorts Video Usage 메타데이터 보강", "src/enrichShortsSongData.ts", [
+    `--inputFile=${path.join(shortsRawDir, `shorts_video_usage_detail_${yearMonth}.csv`)}`,
+    `--assetMetadataFile=${assetMetadataFile}`,
+    `--outputFile=${path.join(packageDir, SHORTS_VIDEO_FILE)}`,
+  ]);
+  await runTsxStep("8/8 GE 총액 요약 생성", "src/extractPublishingGeSummary.ts", [
     commonMonthArg,
     "--publishingSystemManagedDir=reports/system-managed-pla",
     `--outputDir=${geDir}`,

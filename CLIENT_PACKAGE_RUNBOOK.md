@@ -2,7 +2,7 @@
 
 ## Goal
 
-Generate a 9-file client package whose summed settlement amount matches the YouTube Reporting API system-managed source data.
+Generate an 8-file settlement package plus one Shorts Video Usage reference file.
 
 ## Source of truth
 
@@ -17,6 +17,7 @@ Required system-managed report types:
 - `content_owner_claim_audio_tier_revenue_summary_a1`
 - `content_owner_claim_audio_tier_revenue_raw_a1`
 - `music_content_owner_shorts_revenue_summary_a1`
+- `content_owner_asset_a3` latest monthly snapshot
 
 ## Output structure
 
@@ -29,15 +30,16 @@ The client package must contain exactly these 9 files:
 - `3_neighboring_monthly_sub.csv`
 - `3_publishing_monthly_sub.csv`
 - `4_neighboring_financial_detail.csv`
-- `4_publishing_ddex_dsr.csv`
 - `5_publishing_shorts_revenue_summary.csv`
+- `6_shorts_video_usage_detail.csv`
 
 ## Rules
 
 - Ads adjustments are included if they exist in the settlement file, even when their `day` value points to an earlier month.
-- Shorts revenue is always exported as its own 9th file.
-- DDEX audio tier totals must include all countries, not only `KR`.
-- Settlement validation must compare the 9-file package total against the system-managed API total directly.
+- Shorts revenue is included in settlement validation.
+- Shorts Video Usage is a reference file and must not be added to the settlement total.
+- Publishing DDEX is excluded because Hardware Audio Tier DSR is not available through the Reporting API.
+- Settlement validation compares only the 8 settlement files against the system-managed API total.
 
 ## Monthly commands
 

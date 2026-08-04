@@ -34,6 +34,15 @@ function parseContentOwnerId(argv: string[], fallback: string): string {
   return argument ? clean(argument.slice("--contentOwnerId=".length)) : fallback;
 }
 
+function parseLatestOnly(argv: string[]): boolean {
+  const argument = argv.find((value) => value === "--latestOnly" || value.startsWith("--latestOnly="));
+  if (!argument || argument === "--latestOnly") {
+    return Boolean(argument);
+  }
+  const value = clean(argument.slice("--latestOnly=".length)).toLowerCase();
+  return !["false", "0", "no", "off"].includes(value);
+}
+
 function toMonthDateRange(yearMonth: string): { start: Date; end: Date } {
   const year = Number(yearMonth.slice(0, 4));
   const monthIndex = Number(yearMonth.slice(4, 6)) - 1;
@@ -145,10 +154,15 @@ async function withRetries<T>(
 async function run(): Promise<void> {
   const argv = process.argv.slice(2);
   const extractionArgv = argv.filter(
-    (argument) => !argument.startsWith("--contentOwnerId=") && !argument.startsWith("--reportTypeIds="),
+    (argument) =>
+      !argument.startsWith("--contentOwnerId=")
+      && !argument.startsWith("--reportTypeIds=")
+      && argument !== "--latestOnly"
+      && !argument.startsWith("--latestOnly="),
   );
   const config = resolveExtractionConfig(parseCliArgs(extractionArgv));
   const reportTypeIds = parseReportTypeIds(argv);
+  const latestOnly = parseLatestOnly(argv);
   const cfg = loadConfig();
   const contentOwnerId = parseContentOwnerId(argv, cfg.contentOwnerId);
   const auth = await getAuthClient();
@@ -158,6 +172,7 @@ async function run(): Promise<void> {
   console.log(`[SystemManaged] yearMonth=${config.yearMonth} dir=${config.systemManagedDir}`);
   console.log(`[SystemManaged] contentOwnerId=${contentOwnerId}`);
   console.log(`[SystemManaged] target report types: ${reportTypeIds.join(", ")}`);
+  console.log(`[SystemManaged] latestOnly=${latestOnly}`);
 
   let pageToken: string | undefined;
   const jobs: { id: string; reportTypeId: string }[] = [];
@@ -183,6 +198,12 @@ async function run(): Promise<void> {
   const failedFiles: string[] = [];
   for (const job of jobs) {
     let reportPageToken: string | undefined;
+    const matchingReports: Array<{
+      downloadUrl: string;
+      startTime?: string | null;
+      endTime?: string | null;
+      createTime?: string | null;
+    }> = [];
     do {
       const response = await withRetries(`jobs.reports.list:${job.id}`, MAX_API_ATTEMPTS, () =>
         yt.jobs.reports.list({
@@ -196,35 +217,52 @@ async function run(): Promise<void> {
         if (!report.downloadUrl || !isMatchingMonth(report, config.yearMonth)) {
           continue;
         }
-
-        const startLabel = clean(report.startTime).slice(0, 10).replace(/-/g, "");
-        const endLabel = clean(report.endTime).slice(0, 10).replace(/-/g, "");
-        const createLabel = clean(report.createTime).slice(0, 10).replace(/-/g, "");
-        const fileName = `${config.yearMonth}_${job.reportTypeId}_${startLabel}_${endLabel}_${createLabel}.csv`;
-        const outputPath = path.join(config.systemManagedDir, fileName);
-
-        if (fs.existsSync(outputPath)) {
-          console.log(`[SystemManaged] Skip existing ${fileName}`);
-          continue;
-        }
-
-        try {
-          console.log(`[SystemManaged] Downloading ${fileName}`);
-          await withRetries(`download:${fileName}`, MAX_DOWNLOAD_ATTEMPTS, async () => {
-            await downloadFile(auth, report.downloadUrl!, outputPath);
-          });
-        } catch (error) {
-          const partialPath = `${outputPath}.partial`;
-          if (fs.existsSync(partialPath)) {
-            fs.unlinkSync(partialPath);
-          }
-          failedFiles.push(fileName);
-          console.error(`[SystemManaged] Failed ${fileName}: ${getErrorMessage(error)}`);
-        }
+        matchingReports.push({
+          downloadUrl: report.downloadUrl,
+          startTime: report.startTime,
+          endTime: report.endTime,
+          createTime: report.createTime,
+        });
       }
 
       reportPageToken = response.data.nextPageToken ?? undefined;
     } while (reportPageToken);
+
+    const selectedReports = latestOnly
+      ? matchingReports
+          .sort((left, right) => clean(right.startTime).localeCompare(clean(left.startTime)))
+          .slice(0, 1)
+      : matchingReports;
+    console.log(
+      `[SystemManaged] ${job.reportTypeId} matching=${matchingReports.length} selected=${selectedReports.length}`,
+    );
+
+    for (const report of selectedReports) {
+      const startLabel = clean(report.startTime).slice(0, 10).replace(/-/g, "");
+      const endLabel = clean(report.endTime).slice(0, 10).replace(/-/g, "");
+      const createLabel = clean(report.createTime).slice(0, 10).replace(/-/g, "");
+      const fileName = `${config.yearMonth}_${job.reportTypeId}_${startLabel}_${endLabel}_${createLabel}.csv`;
+      const outputPath = path.join(config.systemManagedDir, fileName);
+
+      if (fs.existsSync(outputPath)) {
+        console.log(`[SystemManaged] Skip existing ${fileName}`);
+        continue;
+      }
+
+      try {
+        console.log(`[SystemManaged] Downloading ${fileName}`);
+        await withRetries(`download:${fileName}`, MAX_DOWNLOAD_ATTEMPTS, async () => {
+          await downloadFile(auth, report.downloadUrl, outputPath);
+        });
+      } catch (error) {
+        const partialPath = `${outputPath}.partial`;
+        if (fs.existsSync(partialPath)) {
+          fs.unlinkSync(partialPath);
+        }
+        failedFiles.push(fileName);
+        console.error(`[SystemManaged] Failed ${fileName}: ${getErrorMessage(error)}`);
+      }
+    }
   }
 
   if (failedFiles.length > 0) {

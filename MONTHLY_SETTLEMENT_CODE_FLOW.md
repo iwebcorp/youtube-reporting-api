@@ -33,14 +33,17 @@ npm.cmd run monthly-settlement -- --yearMonth=202607
 1. `src/getReports.ts`로 일별 Reporting API raw data를 다운로드한다.
 2. `src/downloadSystemManagedReports.ts`로 일반 Content Owner system-managed 보고서를 다운로드한다.
 3. 같은 코드로 PLA Content Owner system-managed 및 Payment Summary를 다운로드한다.
-4. `src/extractMonthlyClientPackage.ts`로 정산 파일 8개를 생성하고 합계를 검증한다.
-5. `src/extractPublishingGeSummary.ts`로 GE 총액 요약을 생성한다.
+4. 일반 Content Owner의 월말 자산 메타데이터 스냅샷 한 개를 다운로드한다.
+5. `src/extractMonthlyClientPackage.ts`로 정산 파일 8개를 생성하고 합계를 검증한다.
+6. `src/extractShortsSongData.ts`로 Shorts Video Usage를 생성한다.
+7. `src/enrichShortsSongData.ts`로 곡명, Custom ID와 ISRC를 보강한다.
+8. `src/extractPublishingGeSummary.ts`로 GE 총액 요약을 생성한다.
 
 앞 단계가 실패하면 다음 단계는 실행하지 않는다. 이미 다운로드된 같은 파일은 기존 downloader 로직에 따라 건너뛴다.
 
 ## 최종 산출물
 
-`reports_final_YYYYMM_client_pla_8files/`에 아래 8개 파일이 생성된다.
+`reports_final_YYYYMM_client_pla_9files/`에 아래 9개 파일이 생성된다.
 
 1. `1_neighboring_daily_ad.csv`
 2. `1_publishing_daily_ad.csv`
@@ -50,6 +53,9 @@ npm.cmd run monthly-settlement -- --yearMonth=202607
 6. `3_publishing_monthly_sub.csv`
 7. `4_neighboring_financial_detail.csv`
 8. `5_publishing_shorts_revenue_summary.csv`
+9. `6_shorts_video_usage_detail.csv`
+
+`6_shorts_video_usage_detail.csv`는 Video ID와 Engaged Views를 확인하기 위한 참고파일이며 정산 합계에는 더하지 않는다.
 
 `reports_final_YYYYMM_publishing_ge/`에는 아래 파일이 생성된다.
 
@@ -69,11 +75,13 @@ YouTube가 `Hardware Audio Tier DSR 상세 보고서`를 Reporting API로 제공
 | --- | --- |
 | `src/runMonthlySettlement.ts` | 전체 단계를 순차 실행하고 최종 파일을 확인한다. |
 | `src/getReports.ts` | 일별 raw data를 다운로드한다. |
-| `src/downloadSystemManagedReports.ts` | 일반 및 PLA system-managed 보고서를 다운로드한다. |
+| `src/downloadSystemManagedReports.ts` | 일반·PLA 보고서와 월말 자산 메타데이터 스냅샷을 다운로드한다. |
 | `src/extractMonthlyClientPackage.ts` | 8개 정산 파일 생성 순서를 관리한다. |
 | `src/extractCsvs.ts` | Neighboring 1~4를 생성한다. |
 | `src/extractPublishingCsvs.ts` | Publishing 1~3을 생성한다. |
 | `src/extractPublishingShortsSummary.ts` | Shorts 요약을 생성한다. |
+| `src/extractShortsSongData.ts` | Shorts 곡별 및 Video ID별 사용량을 생성한다. |
+| `src/enrichShortsSongData.ts` | Shorts 상세에 자산 메타데이터를 보강한다. |
 | `src/extractPublishingGeSummary.ts` | GE 총액 요약을 생성한다. |
 | `src/validateSettlementPackage.ts` | 8개 정산 파일의 합계를 검증한다. |
 | `src/extractApiSettlementSummary.ts` | 검증용 API 원천 합계를 계산한다. |

@@ -17,6 +17,17 @@ interface AggregatedShortsRow {
   videoIds: Set<string>;
 }
 
+interface AggregatedShortsVideoRow {
+  assetId: string;
+  country: string;
+  videoId: string;
+  views: number;
+  engagedViews: number;
+  watchTimeMinutes: number;
+  redViews: number;
+  redWatchTimeMinutes: number;
+}
+
 function listMonthlyCombinedReports(reportDir: string, yearMonth: string): string[] {
   if (!fs.existsSync(reportDir)) {
     return [];
@@ -46,6 +57,8 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   }
 
   const aggregated = new Map<string, AggregatedShortsRow>();
+  const videoAggregated = new Map<string, AggregatedShortsVideoRow>();
+  let rowsWithoutVideoId = 0;
   for (const filePath of combinedFiles) {
     console.log(`[Shorts] Parsing ${filePath}`);
     const rows = await parseCsvRows(filePath);
@@ -82,6 +95,37 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
       const videoId = row.video_id?.trim() ?? "";
       if (videoId) {
         entry.videoIds.add(videoId);
+        const videoKey = `${assetId}|${country}|${videoId}`;
+        const videoEntry = videoAggregated.get(videoKey) ?? {
+          assetId,
+          country,
+          videoId,
+          views: 0,
+          engagedViews: 0,
+          watchTimeMinutes: 0,
+          redViews: 0,
+          redWatchTimeMinutes: 0,
+        };
+        videoEntry.views += parseNumber(row.views ?? "", `${filePath} asset=${assetId} video=${videoId} views`);
+        videoEntry.engagedViews += parseNumber(
+          row.engaged_views ?? "",
+          `${filePath} asset=${assetId} video=${videoId} engaged_views`,
+        );
+        videoEntry.watchTimeMinutes += parseNumber(
+          row.watch_time_minutes ?? "",
+          `${filePath} asset=${assetId} video=${videoId} watch_time_minutes`,
+        );
+        videoEntry.redViews += parseNumber(
+          row.red_views ?? "",
+          `${filePath} asset=${assetId} video=${videoId} red_views`,
+        );
+        videoEntry.redWatchTimeMinutes += parseNumber(
+          row.red_watch_time_minutes ?? "",
+          `${filePath} asset=${assetId} video=${videoId} red_watch_time_minutes`,
+        );
+        videoAggregated.set(videoKey, videoEntry);
+      } else {
+        rowsWithoutVideoId += 1;
       }
 
       aggregated.set(key, entry);
@@ -142,6 +186,58 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
 
   fs.writeFileSync(outputPath, iconv.encode(`${lines.join("\n")}\n`, "cp949"));
   console.log(`[Shorts] Wrote ${outputPath}. rows=${rows.length} files=${combinedFiles.length}`);
+
+  const videoRows = Array.from(videoAggregated.values()).sort((left, right) => {
+    if (left.country !== right.country) return left.country.localeCompare(right.country);
+    if (left.assetId !== right.assetId) return left.assetId.localeCompare(right.assetId);
+    return right.engagedViews - left.engagedViews || left.videoId.localeCompare(right.videoId);
+  });
+  const videoOutputPath = path.join(config.outputDir, `shorts_video_usage_detail_${config.yearMonth}.csv`);
+  const videoHeader = [
+    "Month",
+    "Category",
+    "Country",
+    "Asset ID",
+    "Asset Title",
+    "Custom ID",
+    "ISRC",
+    "ISWC",
+    "Writers",
+    "Video ID",
+    "Shorts Views",
+    "Engaged Views",
+    "Watch Time Minutes",
+    "Red Views",
+    "Red Watch Time Minutes",
+  ];
+  const videoLines = [videoHeader.join(",")];
+  for (const row of videoRows) {
+    const metadata = classifier.getMetadata(row.assetId);
+    const category = classifier.classify(row.assetId);
+    videoLines.push(
+      [
+        config.yearMonth,
+        csvEscape(category),
+        csvEscape(row.country),
+        csvEscape(row.assetId),
+        csvEscape(metadata.title),
+        csvEscape(metadata.customId),
+        csvEscape(metadata.isrc),
+        csvEscape(metadata.iswc),
+        csvEscape(metadata.writers),
+        csvEscape(row.videoId),
+        row.views.toString(),
+        row.engagedViews.toString(),
+        row.watchTimeMinutes.toFixed(6),
+        row.redViews.toString(),
+        row.redWatchTimeMinutes.toFixed(6),
+      ].join(","),
+    );
+  }
+  fs.writeFileSync(videoOutputPath, iconv.encode(`${videoLines.join("\n")}\n`, "cp949"));
+  console.log(
+    `[Shorts] Wrote ${videoOutputPath}. rows=${videoRows.length} rowsWithoutVideoId=${rowsWithoutVideoId}`,
+  );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
