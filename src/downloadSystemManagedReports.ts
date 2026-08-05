@@ -110,6 +110,18 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function isDeletedOAuthClientError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  if (message.includes("deleted_client")) {
+    return true;
+  }
+  try {
+    return JSON.stringify(error).toLowerCase().includes("deleted_client");
+  } catch {
+    return false;
+  }
+}
+
 function isRetryableError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   const code = typeof error === "object" && error !== null && "code" in error ? String(error.code).toLowerCase() : "";
@@ -278,6 +290,12 @@ async function run(): Promise<void> {
 }
 
 run().catch((error) => {
-  console.error("[SystemManaged] Download failed.", error);
+  if (isDeletedOAuthClientError(error)) {
+    console.error(
+      "[SystemManaged] Google OAuth 클라이언트가 삭제되어 인증할 수 없습니다. Google Cloud의 Google Auth Platform > Clients > Deleted credentials에서 클라이언트를 복원한 뒤 다시 실행하세요.",
+    );
+  } else {
+    console.error(`[SystemManaged] Download failed: ${getErrorMessage(error)}`);
+  }
   process.exitCode = 1;
 });

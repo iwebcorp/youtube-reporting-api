@@ -118,3 +118,34 @@
 - 202606 전체 단일 실행 시간은 1,146.8초이며 정산 검증 결과는 `difference=0.000000000`이다.
 - 새 패키지의 기존 8개 정산 파일은 `reports_metadata_fix_202606_client_pla_8files`와 SHA-256이 모두 일치한다.
 - 자동 생성 Video Usage의 SHA-256은 `DB82BB10DB1698A32286EBFACD4CCA1C28516C917ACAB2CA41A0914FCFF21B1F`이며 수동 검증본과 일치한다.
+
+## 202607 Raw Data 다운로드
+
+- `npm.cmd run get-reports -- --yearMonth=202607 --reportDir=reports` 실행이 388초에 성공했다.
+- `content_owner_asset_estimated_revenue_a1`은 31개, 약 0.17GiB다.
+- `content_owner_asset_combined_a3`는 31개, 약 2.57GiB다.
+- 7월 Raw Data는 총 62개, `2,936,949,067바이트`이며 7월 1일부터 31일까지 누락 날짜가 없다.
+- API 조회 범위에서 함께 제공된 2026-08-01 파일 2개도 저장됐지만 202607 추출기는 파일명 월 필터로 제외한다.
+- 2026-08-05 조회 기준 일반 Content Owner 7종과 PLA 5종의 Job은 모두 존재하지만, `startTime`이 2026년 7월인 system-managed 정산 보고서는 12종 모두 0개다.
+- 202606 보고서는 2026-07-07부터 2026-07-11 사이에 생성됐으므로 202607 보고서도 2026-08-07 이후 재확인하는 것이 적절하다.
+
+## 월별 정산 로컬 GUI
+
+- Electron 대신 Node 내장 HTTP 서버와 정적 HTML, CSS, JavaScript로 로컬 GUI를 구현했다.
+- `start-gui.cmd`는 시스템 Node를 사용하며, 추후 `runtime/node.exe`가 포함되면 해당 실행 파일을 우선 사용한다.
+- GUI는 `127.0.0.1:43127`에서만 열리고 동시에 한 개 작업만 실행한다.
+- `src/runMonthlySettlement.ts`의 기본 동작은 전체 단계 실행으로 유지했다. `--steps=raw,managed,extract` 옵션을 추가해 선택 실행만 확장했다.
+- Raw와 System-managed는 각각 독립 실행할 수 있다. Extract는 두 단계의 실제 파일 준비 검사를 통과해야 시작한다.
+- Extract를 GUI에서 선택하면 준비되지 않은 Raw 또는 System-managed 단계가 자동으로 포함된다.
+- 준비 여부는 파일명뿐 아니라 비어 있지 않은 파일과 `.partial` 부재를 검사한다.
+- 202606 확인 결과 Raw `60/60`, System-managed `13/13`, 최종 산출물 `10/10`으로 준비 완료다.
+- 202607 확인 결과 Raw `62/62`, System-managed `0/13`, 최종 산출물 `0/10`이다.
+- 집중 타입 검사와 `ui/app.js` 구문 검사는 통과했다. 전체 타입 검사는 기존 파일의 오류와 `src/downloadSystemManagedReports.ts`의 선행 오류 때문에 통과하지 못했다.
+
+## 202607 System-managed OAuth 오류
+
+- 2026-08-05 System-managed 실행은 Google 토큰 갱신 단계에서 `401 deleted_client`로 실패했다.
+- 프로젝트 `firebase-iweb` 복원과 별개로 기존 OAuth 클라이언트가 삭제 상태인 것이 원인이다.
+- Google Auth Platform의 Deleted credentials에서 해당 OAuth 클라이언트를 복원해야 한다.
+- 오류 로그에 refresh token이 포함되어 `Error.md`에서 제거했고 GUI 서버에 refresh token 마스킹을 추가했다.
+- 클라이언트 복원 후에는 노출된 기존 토큰을 폐기하기 위해 `token.json`을 삭제하고 재인증해야 한다.

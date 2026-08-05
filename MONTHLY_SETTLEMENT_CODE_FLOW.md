@@ -2,6 +2,10 @@
 
 ## 실행 방법
 
+일반 사용자는 `start-gui.cmd`를 더블클릭해 월과 실행 단계를 선택한다. 자세한 사용법은 `GUI_RUNBOOK.md`에 기록한다.
+
+기존 전체 실행 CMD도 유지한다.
+
 Windows 탐색기에서 아래 파일을 더블클릭한다.
 
 ```text
@@ -87,3 +91,16 @@ YouTube가 `Hardware Audio Tier DSR 상세 보고서`를 Reporting API로 제공
 | `src/extractApiSettlementSummary.ts` | 검증용 API 원천 합계를 계산한다. |
 
 인증, 설정, CSV parsing, metadata 및 writer 코드는 위 실행 파일에서 자동으로 import되므로 별도로 실행하지 않는다.
+
+## GUI 관련 코드
+
+| 파일 | 역할 |
+| --- | --- |
+| `start-gui.cmd` | Node 실행 경로를 선택하고 로컬 GUI 서버를 시작한다. |
+| `src/guiServer.ts` | 로컬 HTTP API, 실행 프로세스, 중지와 실시간 로그를 관리한다. |
+| `src/monthlyReadiness.ts` | 월별 Raw, System-managed, 최종 산출물의 실제 파일 상태를 검사한다. |
+| `ui/index.html` | 월 선택과 단계 선택 화면을 제공한다. |
+| `ui/app.js` | 선행 단계 자동 선택, 상태 조회와 실시간 로그를 처리한다. |
+| `ui/style.css` | 데스크톱과 모바일 작업 화면을 구성한다. |
+
+GUI는 외부 네트워크에 공개하지 않고 `127.0.0.1:43127`에서만 실행된다. 동시에 한 개의 월별 작업만 실행할 수 있다.

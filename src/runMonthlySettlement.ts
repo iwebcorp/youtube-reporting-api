@@ -3,37 +3,21 @@ import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
 import { createInterface } from "readline/promises";
+import {
+  ASSET_METADATA_REPORT_TYPE,
+  PACKAGE_FILES,
+  PLA_REPORT_TYPES,
+  SHORTS_VIDEO_FILE,
+  checkManagedReadiness,
+  checkRawReadiness,
+  getMonthlyPaths,
+  isValidYearMonth,
+} from "./monthlyReadiness.js";
 
 const GENERAL_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 const PLA_CONTENT_OWNER_ID = "C9wllE5I6sRtJdunaUAdqQ";
-const ASSET_METADATA_REPORT_TYPE = "content_owner_asset_a3";
-const SHORTS_VIDEO_FILE = "6_shorts_video_usage_detail.csv";
-const PLA_REPORT_TYPES = [
-  "content_owner_asset_ad_revenue_raw_a1",
-  "content_owner_asset_ad_adjustment_revenue_raw_a1",
-  "publisher_content_owner_music_asset_red_revenue_raw_a1",
-  "publisher_content_owner_asset_red_adjustment_revenue_raw_a1",
-  "content_owner_payments_summary_a1",
-];
-const PACKAGE_FILES = [
-  "1_neighboring_daily_ad.csv",
-  "1_publishing_daily_ad.csv",
-  "2_neighboring_daily_ad_adj.csv",
-  "2_publishing_daily_ad_adj.csv",
-  "3_neighboring_monthly_sub.csv",
-  "3_publishing_monthly_sub.csv",
-  "4_neighboring_financial_detail.csv",
-  "5_publishing_shorts_revenue_summary.csv",
-  SHORTS_VIDEO_FILE,
-];
-
-function isValidYearMonth(value: string): boolean {
-  if (!/^\d{6}$/.test(value)) {
-    return false;
-  }
-  const month = Number(value.slice(4, 6));
-  return month >= 1 && month <= 12;
-}
+type SettlementStep = "raw" | "managed" | "extract";
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
 
 async function resolveYearMonth(argv: string[]): Promise<string> {
   const option = argv.find((argument) => argument.startsWith("--yearMonth="));
@@ -53,6 +37,22 @@ async function resolveYearMonth(argv: string[]): Promise<string> {
     throw new Error(`[MonthlySettlement] Invalid yearMonth: ${yearMonth}. Use YYYYMM.`);
   }
   return yearMonth;
+}
+
+function resolveSteps(argv: string[]): Set<SettlementStep> {
+  const option = argv.find((argument) => argument.startsWith("--steps="));
+  if (!option) return new Set(ALL_STEPS);
+
+  const values = option
+    .slice("--steps=".length)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const invalid = values.filter((value) => !ALL_STEPS.includes(value as SettlementStep));
+  if (values.length === 0 || invalid.length > 0) {
+    throw new Error(`[MonthlySettlement] Invalid steps: ${invalid.join(", ") || "empty"}.`);
+  }
+  return new Set(values as SettlementStep[]);
 }
 
 async function runTsxStep(label: string, scriptPath: string, args: string[]): Promise<void> {
@@ -104,57 +104,92 @@ function findLatestAssetMetadataFile(directoryPath: string, yearMonth: string): 
 }
 
 async function run(): Promise<void> {
-  const yearMonth = await resolveYearMonth(process.argv.slice(2));
-  const packageDir = `reports_final_${yearMonth}_client_pla_9files`;
-  const geDir = `reports_final_${yearMonth}_publishing_ge`;
-  const assetMetadataDir = "reports/system-managed-assets";
-  const shortsRawDir = `reports/shorts-usage-${yearMonth}`;
+  const argv = process.argv.slice(2);
+  const yearMonth = await resolveYearMonth(argv);
+  const steps = resolveSteps(argv);
+  const paths = getMonthlyPaths(yearMonth);
+  const { packageDir, geDir, assetMetadataDir, shortsRawDir } = paths;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
 
-  await runTsxStep("1/8 일별 raw data 다운로드", "src/getReports.ts", [commonMonthArg, "--reportDir=reports"]);
-  await runTsxStep("2/8 일반 system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
+  console.log(`[MonthlySettlement] Selected stages: ${[...steps].join(", ")}`);
+
+  if (steps.has("raw")) {
+    console.log("\n[MonthlySettlement] STAGE raw START");
+    await runTsxStep("일별 raw data 다운로드", "src/getReports.ts", [commonMonthArg, `--reportDir=${paths.reportDir}`]);
+    const raw = checkRawReadiness(yearMonth, paths);
+    if (!raw.ready) {
+      throw new Error(`[MonthlySettlement] Raw data incomplete: ${raw.present}/${raw.expected}.`);
+    }
+    console.log("[MonthlySettlement] STAGE raw COMPLETE");
+  }
+
+  if (steps.has("managed")) {
+    console.log("\n[MonthlySettlement] STAGE managed START");
+    await runTsxStep("일반 system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
+      commonMonthArg,
+      `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
+      `--systemManagedDir=${paths.generalManagedDir}`,
+    ]);
+    await runTsxStep("자산 메타데이터 월말 스냅샷 다운로드", "src/downloadSystemManagedReports.ts", [
+      commonMonthArg,
+      `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
+      `--systemManagedDir=${assetMetadataDir}`,
+      `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
+      "--latestOnly",
+    ]);
+    await runTsxStep("PLA system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
+      commonMonthArg,
+      `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
+      `--systemManagedDir=${paths.plaManagedDir}`,
+      `--reportTypeIds=${PLA_REPORT_TYPES.join(",")}`,
+    ]);
+    const managed = checkManagedReadiness(yearMonth, paths);
+    if (!managed.ready) {
+      throw new Error(`[MonthlySettlement] System-managed data incomplete: ${managed.present}/${managed.expected}. Reports may not be released yet.`);
+    }
+    console.log("[MonthlySettlement] STAGE managed COMPLETE");
+  }
+
+  if (!steps.has("extract")) {
+    console.log(`\n[MonthlySettlement] Selected stages completed for ${yearMonth}.`);
+    return;
+  }
+
+  const raw = checkRawReadiness(yearMonth, paths);
+  const managed = checkManagedReadiness(yearMonth, paths);
+  if (!raw.ready || !managed.ready) {
+    throw new Error(
+      `[MonthlySettlement] Extract requires ready raw and system-managed data. raw=${raw.present}/${raw.expected}, managed=${managed.present}/${managed.expected}.`,
+    );
+  }
+
+  console.log("\n[MonthlySettlement] STAGE extract START");
+  await runTsxStep("8개 정산 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
     commonMonthArg,
-    `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
-    "--systemManagedDir=reports/system-managed",
-  ]);
-  await runTsxStep("3/8 자산 메타데이터 월말 스냅샷 다운로드", "src/downloadSystemManagedReports.ts", [
-    commonMonthArg,
-    `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
-    `--systemManagedDir=${assetMetadataDir}`,
-    `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
-    "--latestOnly",
-  ]);
-  await runTsxStep("4/8 PLA system-managed 다운로드", "src/downloadSystemManagedReports.ts", [
-    commonMonthArg,
-    `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
-    "--systemManagedDir=reports/system-managed-pla",
-    `--reportTypeIds=${PLA_REPORT_TYPES.join(",")}`,
-  ]);
-  await runTsxStep("5/8 8개 정산 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
-    commonMonthArg,
-    "--reportDir=reports",
-    "--systemManagedDir=reports/system-managed",
-    "--publishingSystemManagedDir=reports/system-managed-pla",
+    `--reportDir=${paths.reportDir}`,
+    `--systemManagedDir=${paths.generalManagedDir}`,
+    `--publishingSystemManagedDir=${paths.plaManagedDir}`,
     `--outputDir=${packageDir}`,
   ]);
-  await runTsxStep("6/8 Shorts Video Usage 생성", "src/extractShortsSongData.ts", [
+  await runTsxStep("Shorts Video Usage 생성", "src/extractShortsSongData.ts", [
     commonMonthArg,
-    "--reportDir=reports",
+    `--reportDir=${paths.reportDir}`,
     `--outputDir=${shortsRawDir}`,
   ]);
   const assetMetadataFile = findLatestAssetMetadataFile(assetMetadataDir, yearMonth);
-  await runTsxStep("7/8 Shorts Video Usage 메타데이터 보강", "src/enrichShortsSongData.ts", [
+  await runTsxStep("Shorts Video Usage 메타데이터 보강", "src/enrichShortsSongData.ts", [
     `--inputFile=${path.join(shortsRawDir, `shorts_video_usage_detail_${yearMonth}.csv`)}`,
     `--assetMetadataFile=${assetMetadataFile}`,
     `--outputFile=${path.join(packageDir, SHORTS_VIDEO_FILE)}`,
   ]);
-  await runTsxStep("8/8 GE 총액 요약 생성", "src/extractPublishingGeSummary.ts", [
+  await runTsxStep("GE 총액 요약 생성", "src/extractPublishingGeSummary.ts", [
     commonMonthArg,
-    "--publishingSystemManagedDir=reports/system-managed-pla",
+    `--publishingSystemManagedDir=${paths.plaManagedDir}`,
     `--outputDir=${geDir}`,
   ]);
 
   verifyOutputs(packageDir, geDir);
+  console.log("[MonthlySettlement] STAGE extract COMPLETE");
   console.log(`\n[MonthlySettlement] Completed ${yearMonth}.`);
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);

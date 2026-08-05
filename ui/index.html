@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- 월별 YouTube 정산 실행 단계를 선택하는 로컬 작업 화면 -->
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>월별 정산 실행기</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="workspace">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">YouTube CMS</p>
+          <h1>월별 정산 실행기</h1>
+        </div>
+        <span id="runBadge" class="run-badge idle">대기 중</span>
+      </header>
+
+      <section class="controls" aria-labelledby="target-heading">
+        <div class="month-control">
+          <label id="target-heading" for="yearMonth">정산 대상 월</label>
+          <input id="yearMonth" type="month" />
+        </div>
+        <div class="actions">
+          <button id="openButton" class="button secondary" type="button">결과 폴더 열기</button>
+          <button id="stopButton" class="button danger" type="button" disabled>중지</button>
+          <button id="runButton" class="button primary" type="button">선택 단계 실행</button>
+        </div>
+      </section>
+
+      <section class="stage-list" aria-label="실행 단계">
+        <label class="stage-row" data-stage="raw">
+          <input type="checkbox" value="raw" />
+          <span class="stage-index">01</span>
+          <span class="stage-copy">
+            <strong>Raw Data</strong>
+            <span>일별 수익 및 자산 사용량 보고서</span>
+          </span>
+          <span class="stage-status loading">확인 중</span>
+        </label>
+        <label class="stage-row" data-stage="managed">
+          <input type="checkbox" value="managed" />
+          <span class="stage-index">02</span>
+          <span class="stage-copy">
+            <strong>System-managed Data</strong>
+            <span>일반·PLA 정산 및 자산 메타데이터</span>
+          </span>
+          <span class="stage-status loading">확인 중</span>
+        </label>
+        <label class="stage-row" data-stage="extract">
+          <input type="checkbox" value="extract" />
+          <span class="stage-index">03</span>
+          <span class="stage-copy">
+            <strong>정산 파일 추출</strong>
+            <span>9개 전달 파일 및 GE 총액 요약</span>
+          </span>
+          <span class="stage-status loading">확인 중</span>
+        </label>
+      </section>
+
+      <p id="notice" class="notice" role="status"></p>
+
+      <section class="log-section" aria-labelledby="log-heading">
+        <div class="log-header">
+          <h2 id="log-heading">실행 로그</h2>
+          <button id="clearButton" class="text-button" type="button">화면 지우기</button>
+        </div>
+        <pre id="logOutput" aria-live="polite">실행 대기 중입니다.</pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

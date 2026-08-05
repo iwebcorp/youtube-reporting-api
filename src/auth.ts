@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as http from "http";
 import * as url from "url";
+import { spawn } from "child_process";
 
 const CREDENTIALS_PATH = path.join(process.cwd(), "credentials.json");
 const TOKEN_PATH = path.join(process.cwd(), "token.json");
@@ -39,6 +40,7 @@ async function authorizeNewToken(
 ): Promise<OAuth2Client> {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
+    prompt: "consent",
     scope: SCOPES,
   });
 
@@ -46,7 +48,9 @@ async function authorizeNewToken(
   fs.writeFileSync("auth_url.txt", authUrl);
   console.log("URL이 auth_url.txt 파일에도 저장되었습니다.");
 
-  const code = await waitForCode();
+  const codePromise = waitForCode();
+  openBrowser(authUrl);
+  const code = await codePromise;
   const { tokens } = await oauth2Client.getToken(code);
   oauth2Client.setCredentials(tokens);
 
@@ -54,6 +58,15 @@ async function authorizeNewToken(
   console.log("token.json 저장 완료!");
 
   return oauth2Client;
+}
+
+function openBrowser(targetUrl: string): void {
+  if (process.platform === "win32") {
+    spawn("rundll32.exe", ["url.dll,FileProtocolHandler", targetUrl], { detached: true, stdio: "ignore" }).unref();
+    return;
+  }
+  const command = process.platform === "darwin" ? "open" : "xdg-open";
+  spawn(command, [targetUrl], { detached: true, stdio: "ignore" }).unref();
 }
 
 function waitForCode(): Promise<string> {

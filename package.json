@@ -27,7 +27,8 @@
     "fetch-asset-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchAssetRelationships.ts",
     "analyze-publishing-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/analyzePublishingRelationshipCorrelation.ts",
     "select-publishing-relationship-samples": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/selectPublishingRelationshipSamples.ts",
-    "download-system-managed": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/downloadSystemManagedReports.ts"
+    "download-system-managed": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/downloadSystemManagedReports.ts",
+    "gui": "node ./node_modules/tsx/dist/cli.mjs src/guiServer.ts"
   },
   "keywords": [],
   "author": "",
