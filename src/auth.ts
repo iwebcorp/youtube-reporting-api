@@ -9,10 +9,7 @@ import { spawn } from "child_process";
 const CREDENTIALS_PATH = path.join(process.cwd(), "credentials.json");
 const TOKEN_PATH = path.join(process.cwd(), "token.json");
 const SCOPES = [
-  "https://www.googleapis.com/auth/yt-analytics.readonly",
   "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
-  "https://www.googleapis.com/auth/youtubepartner",
-  "https://www.googleapis.com/auth/youtube",
 ];
 
 async function getAuthClient(): Promise<OAuth2Client> {
