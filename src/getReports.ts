@@ -4,30 +4,29 @@ import { loadConfig } from "./configLoader.js";
 import { parseCliArgs, resolveExtractionConfig } from "./reporting/utils.js";
 import * as fs from "fs";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 const cfg = loadConfig();
 
-function toMonthDateRange(yearMonth: string): { start: Date; end: Date } {
-  const year = Number(yearMonth.slice(0, 4));
-  const monthIndex = Number(yearMonth.slice(4, 6)) - 1;
-  return {
-    start: new Date(Date.UTC(year, monthIndex, 1, 0, 0, 0)),
-    end: new Date(Date.UTC(year, monthIndex + 1, 0, 23, 59, 59, 999)),
-  };
+export function isReportInSelection(
+  startTime: string | null | undefined,
+  yearMonth: string | undefined,
+  startDate: string,
+  endDate: string,
+): boolean {
+  if (!startTime) return false;
+  const reportDate = startTime.slice(0, 10);
+  if (yearMonth) {
+    return reportDate.slice(0, 7).replace("-", "") === yearMonth;
+  }
+  return reportDate >= startDate && reportDate <= endDate;
 }
 
 async function getReports() {
   const cliArgs = process.argv.slice(2);
   const extractionConfig = resolveExtractionConfig(parseCliArgs(cliArgs));
   const hasExplicitYearMonth = cliArgs.some((argument) => argument.startsWith("--yearMonth="));
-  const range = hasExplicitYearMonth
-    ? toMonthDateRange(extractionConfig.yearMonth)
-    : {
-        start: new Date(cfg.startDate),
-        end: new Date(cfg.endDate),
-      };
-  range.start.setHours(0, 0, 0, 0);
-  range.end.setHours(23, 59, 59, 999);
+  const selectedYearMonth = hasExplicitYearMonth ? extractionConfig.yearMonth : undefined;
   const rangeLabel = hasExplicitYearMonth ? extractionConfig.yearMonth : `${cfg.startDate} ~ ${cfg.endDate}`;
 
   const auth = await getAuthClient();
@@ -56,11 +55,9 @@ async function getReports() {
     });
 
     const reports = reportsRes.data.reports || [];
-    const filteredReports = reports.filter((report) => {
-      if (!report.startTime) return false;
-      const reportDate = new Date(report.startTime);
-      return reportDate >= range.start && reportDate <= range.end;
-    });
+    const filteredReports = reports.filter((report) =>
+      isReportInSelection(report.startTime, selectedYearMonth, cfg.startDate, cfg.endDate),
+    );
 
     if (filteredReports.length === 0) {
       console.log(` - No reports for ${rangeLabel}.`);
@@ -99,4 +96,6 @@ async function getReports() {
   console.log("\n[Reports] Download pass completed.");
 }
 
-getReports().catch(console.error);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  getReports().catch(console.error);
+}
