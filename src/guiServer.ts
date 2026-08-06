@@ -110,6 +110,9 @@ function startRun(yearMonth: string, selectedSteps: SettlementStep[]): Settlemen
   if (child) throw new Error("Another monthly job is already running.");
   const steps = resolveRunSteps(yearMonth, selectedSteps);
   const tsxCliPath = path.resolve("node_modules", "tsx", "dist", "cli.mjs");
+  if (!fs.existsSync(tsxCliPath)) {
+    throw new Error("프로그램 구성 파일이 없습니다. setup-client.cmd를 먼저 실행해 주세요.");
+  }
   logs = [];
   updateState({
     running: true,
