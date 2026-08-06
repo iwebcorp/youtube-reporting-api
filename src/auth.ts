@@ -40,7 +40,7 @@ async function authorizeNewToken(
 ): Promise<OAuth2Client> {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent",
+    prompt: "consent select_account",
     scope: SCOPES,
   });
 
