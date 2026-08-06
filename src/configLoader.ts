@@ -17,35 +17,37 @@ export interface AppConfig {
 
 let configCache: AppConfig | null = null;
 
+const DEFAULT_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
+
+function getPreviousMonthRange(): { startDate: string; endDate: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  const format = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  return { startDate: format(start), endDate: format(end) };
+}
+
 export function loadConfig(): AppConfig {
   if (configCache !== null) {
     return configCache;
   }
 
   const configPath = path.join(process.cwd(), "config.json");
-  if (!fs.existsSync(configPath)) {
-    console.error("[Config] Missing config.json in project root.");
-    process.exit(1);
-  }
-
-  const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Partial<AppConfig>;
-  const requiredKeys: Array<keyof Pick<AppConfig, "contentOwnerId" | "startDate" | "endDate">> = [
-    "contentOwnerId",
-    "startDate",
-    "endDate",
-  ];
-
-  for (const key of requiredKeys) {
-    if (raw[key] === undefined || raw[key] === null || raw[key] === "") {
-      console.error(`[Config] Missing required field "${key}" in config.json.`);
-      process.exit(1);
-    }
-  }
+  const raw = fs.existsSync(configPath)
+    ? (JSON.parse(fs.readFileSync(configPath, "utf-8")) as Partial<AppConfig>)
+    : {};
+  const previousMonth = getPreviousMonthRange();
 
   const baseConfig: AppConfig = {
-    contentOwnerId: raw.contentOwnerId as string,
-    startDate: raw.startDate as string,
-    endDate: raw.endDate as string,
+    contentOwnerId: raw.contentOwnerId ?? DEFAULT_CONTENT_OWNER_ID,
+    startDate: raw.startDate ?? previousMonth.startDate,
+    endDate: raw.endDate ?? previousMonth.endDate,
     usdPrecision: raw.usdPrecision ?? 6,
     krwPrecision: raw.krwPrecision ?? 2,
     excludeCountries: (raw.excludeCountries ?? ["US"]).map((country) => country.toUpperCase()),
@@ -62,15 +64,6 @@ export function loadConfig(): AppConfig {
   }
 
   configCache = baseConfig;
-
-  const settlementInfo =
-    typeof baseConfig.exchangeRate === "number" && typeof baseConfig.withholdingTaxRate === "number"
-      ? `, 환율: ${baseConfig.exchangeRate}, 원천세율: ${(baseConfig.withholdingTaxRate * 100).toFixed(0)}%`
-      : "";
-
-  console.log(
-    `[Config] 설정 로드 완료 — 정산기간: ${baseConfig.startDate} ~ ${baseConfig.endDate}${settlementInfo}`,
-  );
 
   return baseConfig;
 }

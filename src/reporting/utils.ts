@@ -208,7 +208,7 @@ export function listMonthlySystemManagedFiles(
 
     const suffix = fileName.slice(prefix.length, -4);
     const [startLabel, endLabel, createLabel] = suffix.split("_");
-    if (!startLabel?.startsWith(yearMonth)) {
+    if (!startLabel?.startsWith(yearMonth) || createLabel === undefined) {
       continue;
     }
 

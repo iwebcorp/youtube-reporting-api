@@ -231,7 +231,7 @@ export class AssetMetadataRepository {
 
     return withMetadataFallbacks({
       assetId,
-      sourceCategory,
+      ...(sourceCategory ? { sourceCategory } : {}),
       title: this.pick(existing.title, row, ["asset title", "title"]),
       customId: this.pick(existing.customId, row, ["custom id"]),
       isrc: this.pick(existing.isrc, row, ["isrc"]),

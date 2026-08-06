@@ -1,14 +1,11 @@
 {
-  "name": "youtube-api-prototype",
+  "name": "kwangsoo-youtube-settlement",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "광수미디어 YouTube 월별 정산 데이터 생성 도구",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "tsx src/index.ts",
-    "create-job": "tsx src/createJob.ts",
+    "start": "npm run gui",
+    "typecheck": "tsc --noEmit",
     "get-reports": "tsx src/getReports.ts",
-    "analyze-reports": "tsx src/analyzeReports.ts",
     "extract-csv": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractCsvs.ts",
     "extract-pub": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractPublishingCsvs.ts",
     "extract-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractMonthlyClientPackage.ts",
@@ -18,15 +15,7 @@
     "monthly-settlement": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/runMonthlySettlement.ts",
     "extract-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/extractShortsSongData.ts",
     "enrich-shorts-song-data": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/enrichShortsSongData.ts",
-    "export-client-api-samples": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/exportClientApiSourceSamples.ts",
     "validate-settlement-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/validateSettlementPackage.ts",
-    "add-custom-id-to-reports": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/addCustomIdToReports.ts",
-    "validate-client-package": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/validateClientPackage.ts",
-    "build-metadata-cache": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/buildMetadataCache.ts",
-    "fetch-publishing-breakdown": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchPublishingBreakdown.ts",
-    "fetch-asset-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/fetchAssetRelationships.ts",
-    "analyze-publishing-relationships": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/analyzePublishingRelationshipCorrelation.ts",
-    "select-publishing-relationship-samples": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/selectPublishingRelationshipSamples.ts",
     "download-system-managed": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/downloadSystemManagedReports.ts",
     "gui": "node ./node_modules/tsx/dist/cli.mjs src/guiServer.ts"
   },
@@ -43,7 +32,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.8",
     "typescript": "^5.9.3"
   }
 }

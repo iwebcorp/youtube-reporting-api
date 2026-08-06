@@ -231,9 +231,9 @@ async function run(): Promise<void> {
         }
         matchingReports.push({
           downloadUrl: report.downloadUrl,
-          startTime: report.startTime,
-          endTime: report.endTime,
-          createTime: report.createTime,
+          ...(report.startTime !== undefined ? { startTime: report.startTime } : {}),
+          ...(report.endTime !== undefined ? { endTime: report.endTime } : {}),
+          ...(report.createTime !== undefined ? { createTime: report.createTime } : {}),
         });
       }
 

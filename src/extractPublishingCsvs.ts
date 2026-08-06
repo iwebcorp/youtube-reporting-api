@@ -993,9 +993,8 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
     // The missing piece is the classification layer that separates Embedded vs Cover and
     // determines whether a given claim type expands to Mechanical only or Mechanical+Performance.
-    // That information likely comes from publishing direct exports or Content Manager asset
-    // relationships, not from the raw revenue files below. See fetchAssetRelationships.ts
-    // and the asset_relationship_cache.json output for the first automation step.
+    // That relationship is not included in the raw revenue files below, so this exporter does
+    // not infer the classification automatically.
     const groups = listMonthlyReportGroups(config.reportDir, config.yearMonth);
     if (groups.length === 0) {
       console.warn(`[Publishing] No report files found for ${config.yearMonth} in ${config.reportDir}`);
