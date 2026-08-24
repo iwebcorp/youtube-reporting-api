@@ -1,4 +1,4 @@
-// 대상 월 하나로 API 다운로드부터 10개 전달 파일과 GE 요약까지 실행하는 월별 실행기
+// 대상 월 하나로 API 다운로드부터 최종 산출물 11개까지 실행하는 월별 실행기
 import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
@@ -164,7 +164,7 @@ async function run(): Promise<void> {
   }
 
   console.log("\n[MonthlySettlement] STAGE extract START");
-  await runTsxStep("9개 정산 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
+  await runTsxStep("정산 패키지 핵심 파일 생성 및 검증", "src/extractMonthlyClientPackage.ts", [
     commonMonthArg,
     `--reportDir=${paths.reportDir}`,
     `--systemManagedDir=${paths.generalManagedDir}`,
@@ -191,6 +191,7 @@ async function run(): Promise<void> {
   verifyOutputs(packageDir, geDir);
   console.log("[MonthlySettlement] STAGE extract COMPLETE");
   console.log(`\n[MonthlySettlement] Completed ${yearMonth}.`);
+  console.log("[MonthlySettlement] Generated 11 final output files: 10 client files + 1 GE summary.");
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);
 }

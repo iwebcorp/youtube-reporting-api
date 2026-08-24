@@ -48,6 +48,8 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생성됩니다.
 
+최종 산출물은 전달용 정산 파일 10개와 GE 총액 요약 1개를 합쳐 총 11개입니다.
+
 `Publishing 4`는 YouTube가 Hardware Audio Tier DSR 상세 보고서를 Reporting API로 제공하지 않아 생성 대상에서 제외되어 있습니다. Shorts 상세 파일은 `Engaged Views`와 Video ID를 포함한 사용 내역이며, 곡별 확정 수익 보고서 자체는 아닙니다.
 
 ## 데이터 보관
