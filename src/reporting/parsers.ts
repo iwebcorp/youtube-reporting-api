@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as zlib from "zlib";
 import { parse } from "csv-parse";
 import iconv from "iconv-lite";
 import type {
@@ -33,12 +34,25 @@ function detectEncoding(filePath: string): BufferEncoding | "cp949" {
   return scoreDecodedText(cp949Decoded) > scoreDecodedText(utf8Decoded) ? "cp949" : "utf-8";
 }
 
+function isGzipFile(filePath: string): boolean {
+  const handle = fs.openSync(filePath, "r");
+  try {
+    const signature = Buffer.alloc(2);
+    return fs.readSync(handle, signature, 0, signature.length, 0) === 2
+      && signature[0] === 0x1f
+      && signature[1] === 0x8b;
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
 function createCsvStream(filePath: string, encoding: BufferEncoding | "cp949", delimiter?: "," | "\t") {
   const source = fs.createReadStream(filePath);
+  const decompressed = isGzipFile(filePath) ? source.pipe(zlib.createGunzip()) : source;
   const input =
     encoding === "cp949"
-      ? source.pipe(iconv.decodeStream("cp949"))
-      : source;
+      ? decompressed.pipe(iconv.decodeStream("cp949"))
+      : decompressed;
 
   return input.pipe(
     parse({
@@ -57,7 +71,9 @@ export async function parseCsvRows(
   options: { encoding?: BufferEncoding | "cp949" | "auto"; delimiter?: "," | "\t" } = {},
 ): Promise<CsvRow[]> {
   const rows: CsvRow[] = [];
-  const resolvedEncoding = options.encoding === "auto" ? detectEncoding(filePath) : (options.encoding ?? "utf-8");
+  const resolvedEncoding = options.encoding === "auto"
+    ? (isGzipFile(filePath) ? "utf-8" : detectEncoding(filePath))
+    : (options.encoding ?? "utf-8");
   for await (const row of createCsvStream(filePath, resolvedEncoding, options.delimiter)) {
     rows.push(row);
   }
@@ -154,7 +170,7 @@ function mapPlaybackLocationToBucket(playbackLocationType: string): "watchPage" 
   return null;
 }
 
-export async function buildPublishingUsageCacheFromReports(filePaths: string[]) {
+export async function buildPublishingUsageStatsFromReports(filePaths: string[]) {
   const aggregated = new Map<
     string,
     {
@@ -270,8 +286,12 @@ export async function parsePublishingFinancialFiles(filePaths: string[]): Promis
         assetId,
         country,
         sourceTitle: findFirstValue(row, ["asset title", "title"]),
+        sourceAssetLabels: findFirstValue(row, ["asset labels"]),
         sourceCustomId: findFirstValue(row, ["custom id"]),
         sourceIsrc: findFirstValue(row, ["isrc"]),
+        sourceIswc: findFirstValue(row, ["iswc"]),
+        sourceHfa: findFirstValue(row, ["hfa song code", "hfa"]),
+        sourceWriters: findFirstValue(row, ["writers"]),
         sourceAssetType: findFirstValue(row, ["asset type"]),
         ownedViews: 0,
         adsenseRevenue: 0,
@@ -352,9 +372,13 @@ export async function parseRedSummaryFiles(filePaths: string[]): Promise<Map<str
         country,
         adjustmentType,
         sourceTitle: findFirstValue(row, ["asset title", "title"]),
+        sourceAssetLabels: findFirstValue(row, ["asset labels"]),
         sourceAssetType: findFirstValue(row, ["asset type"]),
         sourceCustomId: findFirstValue(row, ["custom id"]),
         sourceIsrc: findFirstValue(row, ["isrc"]),
+        sourceIswc: findFirstValue(row, ["iswc"]),
+        sourceHfa: findFirstValue(row, ["hfa song code", "hfa"]),
+        sourceWriters: findFirstValue(row, ["writers"]),
         sourceUpc: findFirstValue(row, ["upc"]),
         sourceGrid: findFirstValue(row, ["grid"]),
         sourceArtist: findFirstValue(row, ["artist"]),
@@ -373,6 +397,10 @@ export async function parseRedSummaryFiles(filePaths: string[]): Promise<Map<str
         offer: findFirstValue(row, ["offer"]),
         contentType: findFirstValue(row, ["content type"]),
         claimType: findFirstValue(row, ["claim type"]),
+        compositionRightType: findFirstValue(row, ["composition right type"]),
+        ownershipPercentage: findFirstValue(row, ["ownership percentage"]),
+        claimQuality: findFirstValue(row, ["claim quality"]),
+        revshareRateType: findFirstValue(row, ["revshare rate type"]),
       };
 
       entry.ownedViews += parseNumber(findFirstValue(row, ["owned views"]), `${filePath} asset=${assetId} owned views`);

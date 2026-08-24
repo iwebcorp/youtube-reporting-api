@@ -108,7 +108,7 @@ async function run(): Promise<void> {
   const yearMonth = await resolveYearMonth(argv);
   const steps = resolveSteps(argv);
   const paths = getMonthlyPaths(yearMonth);
-  const { packageDir, geDir, assetMetadataDir, shortsRawDir } = paths;
+  const { packageDir, geDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
 
   console.log(`[MonthlySettlement] Selected stages: ${[...steps].join(", ")}`);
@@ -143,6 +143,13 @@ async function run(): Promise<void> {
       `--systemManagedDir=${paths.plaManagedDir}`,
       `--reportTypeIds=${PLA_REPORT_TYPES.join(",")}`,
     ]);
+    await runTsxStep("PLA 자산 메타데이터 월말 스냅샷 다운로드", "src/downloadSystemManagedReports.ts", [
+      commonMonthArg,
+      `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
+      `--systemManagedDir=${plaAssetMetadataDir}`,
+      `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
+      "--latestOnly",
+    ]);
     const managed = checkManagedReadiness(yearMonth, paths);
     if (!managed.ready) {
       throw new Error(`[MonthlySettlement] System-managed data incomplete: ${managed.present}/${managed.expected}. Reports may not be released yet.`);
@@ -169,11 +176,15 @@ async function run(): Promise<void> {
     `--reportDir=${paths.reportDir}`,
     `--systemManagedDir=${paths.generalManagedDir}`,
     `--publishingSystemManagedDir=${paths.plaManagedDir}`,
+    `--neighboringDir=${assetMetadataDir}`,
+    `--publishingDir=${plaAssetMetadataDir}`,
     `--outputDir=${packageDir}`,
   ]);
   await runTsxStep("Shorts Video Usage 생성", "src/extractShortsSongData.ts", [
     commonMonthArg,
     `--reportDir=${paths.reportDir}`,
+    `--neighboringDir=${assetMetadataDir}`,
+    `--publishingDir=${plaAssetMetadataDir}`,
     `--outputDir=${shortsRawDir}`,
   ]);
   const assetMetadataFile = findLatestAssetMetadataFile(assetMetadataDir, yearMonth);

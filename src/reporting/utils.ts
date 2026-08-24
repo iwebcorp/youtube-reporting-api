@@ -1,13 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
-import { METADATA_FALLBACKS, REPORT_TYPES, UNKNOWN_TEXT_VALUES } from "./constants.js";
+import { REPORT_TYPES, UNKNOWN_TEXT_VALUES } from "./constants.js";
 import type {
   AssetMetadata,
   CsvRow,
   ExtractionCliOptions,
   ExtractionConfig,
-  NeighboringUsageCacheEntry,
-  PublishingUsageCacheEntry,
   ReportFileGroup,
 } from "./types.js";
 import { loadConfig } from "../configLoader.js";
@@ -66,9 +64,6 @@ export function parseCliArgs(argv: string[]): ExtractionCliOptions {
       case "publishingDir":
         options.publishingDir = value;
         break;
-      case "cacheFile":
-        options.cacheFile = value;
-        break;
       case "systemManagedDir":
         options.systemManagedDir = value;
         break;
@@ -98,15 +93,18 @@ export function resolveExtractionConfig(cliOptions: ExtractionCliOptions): Extra
     throw new Error(`[Config] yearMonth must be in YYYYMM format. Received: "${yearMonth}"`);
   }
 
-  const defaultCustomIdDir = `reports_custom_id_${yearMonth}`;
-
   return {
     yearMonth,
     reportDir: path.resolve(process.cwd(), clean(cliOptions.reportDir ?? appConfig.reportDir)),
     outputDir: path.resolve(process.cwd(), clean(cliOptions.outputDir ?? appConfig.outputDir)),
-    neighboringDir: path.resolve(process.cwd(), clean(cliOptions.neighboringDir ?? defaultCustomIdDir)),
-    publishingDir: path.resolve(process.cwd(), clean(cliOptions.publishingDir ?? defaultCustomIdDir)),
-    cacheFile: path.resolve(process.cwd(), clean(cliOptions.cacheFile ?? appConfig.cacheFile)),
+    neighboringDir: path.resolve(
+      process.cwd(),
+      clean(cliOptions.neighboringDir ?? path.join(appConfig.reportDir, "system-managed-assets")),
+    ),
+    publishingDir: path.resolve(
+      process.cwd(),
+      clean(cliOptions.publishingDir ?? path.join(appConfig.reportDir, "system-managed-assets-pla")),
+    ),
     systemManagedDir: path.resolve(
       process.cwd(),
       clean(cliOptions.systemManagedDir ?? path.join(appConfig.reportDir, "system-managed")),
@@ -224,66 +222,6 @@ export function listMonthlySystemManagedFiles(
     .sort((left, right) => left.localeCompare(right));
 }
 
-export function loadJsonRecord<T>(filePath: string): Record<string, T> {
-  if (!fs.existsSync(filePath)) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, T>;
-  } catch (error) {
-    console.warn(`[Files] Failed to parse JSON file ${filePath}. Using empty record.`, error);
-    return {};
-  }
-}
-
-export function loadNeighboringUsageCache(): Record<string, NeighboringUsageCacheEntry> {
-  const cache = loadJsonRecord<Partial<NeighboringUsageCacheEntry>>(path.resolve(process.cwd(), "usage_data_cache.json"));
-  const normalized: Record<string, NeighboringUsageCacheEntry> = {};
-  for (const [assetId, entry] of Object.entries(cache)) {
-    normalized[assetId] = {
-      total: Number(entry.total ?? 0),
-      watchPage: Number(entry.watchPage ?? 0),
-      embedded: Number(entry.embedded ?? 0),
-      channelPage: Number(entry.channelPage ?? 0),
-      live: Number(entry.live ?? 0),
-      onDemand: Number(entry.onDemand ?? 0),
-      adEnabled: Number(entry.adEnabled ?? 0),
-    };
-  }
-  return normalized;
-}
-
-export function loadPublishingUsageCache(): Record<string, PublishingUsageCacheEntry> {
-  const cache = loadJsonRecord<Partial<PublishingUsageCacheEntry>>(
-    path.resolve(process.cwd(), "publishing_usage_cache.json"),
-  );
-  const normalized: Record<string, PublishingUsageCacheEntry> = {};
-  for (const [assetId, entry] of Object.entries(cache)) {
-    normalized[assetId] = {
-      totalRevenue: Number(entry.totalRevenue ?? 0),
-      adRevenue: Number(entry.adRevenue ?? 0),
-      subRevenue: Number(entry.subRevenue ?? 0),
-      totalViews: Number(entry.totalViews ?? 0),
-      watchPageViews: Number(entry.watchPageViews ?? 0),
-      embeddedViews: Number(entry.embeddedViews ?? 0),
-      channelPageViews: Number(entry.channelPageViews ?? 0),
-      liveViews: Number(entry.liveViews ?? 0),
-      onDemandViews: Number(entry.onDemandViews ?? 0),
-      adEnabledViews: Number(entry.adEnabledViews ?? 0),
-      adsenseRevenue: Number(entry.adsenseRevenue ?? 0),
-      doubleclickServedYouTubeSoldRevenue: Number(entry.doubleclickServedYouTubeSoldRevenue ?? 0),
-      doubleclickServedPartnerSoldRevenue: Number(entry.doubleclickServedPartnerSoldRevenue ?? 0),
-      partnerServedPartnerSoldRevenue: Number(entry.partnerServedPartnerSoldRevenue ?? 0),
-      partnerAdsenseRevenue: Number(entry.partnerAdsenseRevenue ?? 0),
-      partnerDoubleclickServedYouTubeSoldRevenue: Number(entry.partnerDoubleclickServedYouTubeSoldRevenue ?? 0),
-      partnerDoubleclickServedPartnerSoldRevenue: Number(entry.partnerDoubleclickServedPartnerSoldRevenue ?? 0),
-      partnerPartnerServedPartnerSoldRevenue: Number(entry.partnerPartnerServedPartnerSoldRevenue ?? 0),
-    };
-  }
-  return normalized;
-}
-
 export function findFirstValue(row: CsvRow, aliases: string[]): string {
   const normalizedAliases = aliases.map(normalizeHeader);
   for (const [key, value] of Object.entries(row)) {
@@ -294,28 +232,23 @@ export function findFirstValue(row: CsvRow, aliases: string[]): string {
   return "";
 }
 
-export function withMetadataFallbacks(metadata: Partial<AssetMetadata> & Pick<AssetMetadata, "assetId">): AssetMetadata {
-  const cleanedWriters = clean(metadata.writers);
-  const cleanedArtist = clean(metadata.artist);
+export function normalizeMetadata(metadata: Partial<AssetMetadata> & Pick<AssetMetadata, "assetId">): AssetMetadata {
   const normalized: AssetMetadata = {
     assetId: metadata.assetId,
-    title: clean(metadata.title) || METADATA_FALLBACKS.title,
-    customId: clean(metadata.customId) || METADATA_FALLBACKS.customId,
-    isrc: clean(metadata.isrc) || METADATA_FALLBACKS.isrc,
-    iswc: clean(metadata.iswc) || METADATA_FALLBACKS.iswc,
-    hfa: clean(metadata.hfa) || METADATA_FALLBACKS.hfa,
-    upc: clean(metadata.upc) || METADATA_FALLBACKS.upc,
-    writers:
-      (cleanedWriters && cleanedWriters !== METADATA_FALLBACKS.writers ? cleanedWriters : "") ||
-      cleanedArtist ||
-      METADATA_FALLBACKS.writers,
-    artist: cleanedArtist || METADATA_FALLBACKS.artist,
-    album: clean(metadata.album) || METADATA_FALLBACKS.album,
-    label: clean(metadata.label) || METADATA_FALLBACKS.label,
-    assetType: clean(metadata.assetType) || METADATA_FALLBACKS.assetType,
-    musicClaimType: clean(metadata.musicClaimType) || METADATA_FALLBACKS.musicClaimType,
-    compositionRightType: clean(metadata.compositionRightType) || METADATA_FALLBACKS.compositionRightType,
-    channelId: clean(metadata.channelId) || METADATA_FALLBACKS.channelId,
+    title: clean(metadata.title),
+    customId: clean(metadata.customId),
+    isrc: clean(metadata.isrc),
+    iswc: clean(metadata.iswc),
+    hfa: clean(metadata.hfa),
+    upc: clean(metadata.upc),
+    writers: clean(metadata.writers),
+    artist: clean(metadata.artist),
+    album: clean(metadata.album),
+    label: clean(metadata.label),
+    assetType: clean(metadata.assetType),
+    musicClaimType: clean(metadata.musicClaimType),
+    compositionRightType: clean(metadata.compositionRightType),
+    channelId: clean(metadata.channelId),
   };
   if (metadata.sourceCategory !== undefined) {
     normalized.sourceCategory = metadata.sourceCategory;

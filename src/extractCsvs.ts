@@ -110,23 +110,6 @@ interface NeighboringDirectSources {
   financialCsvPath: string | null;
 }
 
-function loadPublishingAssetIds(): Set<string> {
-  const filePath = path.resolve(process.cwd(), "publishing_asset_ids.json");
-  if (!fs.existsSync(filePath)) {
-    return new Set<string>();
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
-    if (!Array.isArray(parsed)) {
-      return new Set<string>();
-    }
-    return new Set(parsed.map((value) => String(value).trim()).filter(Boolean));
-  } catch {
-    return new Set<string>();
-  }
-}
-
 function fileNameMatchesYearMonth(fileName: string, yearMonth: string): boolean {
   const firstDateToken = fileName.match(/\d{4}-\d{2}|\d{8}|\d{6}/)?.[0];
   if (!firstDateToken) {
@@ -225,7 +208,7 @@ function isPublishingRecord(
     return true;
   }
 
-  if (!metadata.isrc && metadata.writers !== "Unidentified Writers") {
+  if (!metadata.isrc && metadata.writers) {
     return true;
   }
 
@@ -427,9 +410,9 @@ function writeNeighboringMonthlySummary(
       csvEscape(artist),
       csvEscape(album),
       csvEscape(label),
-      summary.claimType || "UGC",
-      summary.contentType || "Music",
-      summary.offer || "YouTube Premium monthly",
+      summary.claimType,
+      summary.contentType,
+      summary.offer,
       String(summary.ownedViews),
       String(summary.monetizedViewsAudio),
       String(summary.monetizedViewsAudioVisual),
@@ -523,11 +506,11 @@ export async function runNeighboringExtraction(cliArgs: string[] = process.argv.
     console.log(`[Neighboring] API-only export for ${config.yearMonth} from ${config.systemManagedDir}`);
 
     const classifier = new AssetClassifier();
-    const publishingAssetIds = loadPublishingAssetIds();
+    const publishingAssetIds = new Set<string>();
     await classifier.initialize({
+      yearMonth: config.yearMonth,
       neighboringDir: config.neighboringDir,
       publishingDir: config.publishingDir,
-      cacheFile: config.cacheFile,
     });
 
     const adFiles = listMonthlySystemManagedFiles(

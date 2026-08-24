@@ -1,8 +1,11 @@
+// 월별 API 자산 보고서에서만 메타데이터를 구성하는 저장소
 import * as fs from "fs";
 import * as path from "path";
 import type { AssetCategory, AssetMetadata, CsvRow } from "./types.js";
 import { parseCsvRows } from "./parsers.js";
-import { clean, findFirstValue, loadJsonRecord, withMetadataFallbacks } from "./utils.js";
+import { clean, findFirstValue, normalizeHeader, normalizeMetadata } from "./utils.js";
+
+type MetadataProfile = "general" | "publishingComposition" | "publishingRecording";
 
 export class AssetMetadataRepository {
   private readonly neighboringAssets = new Set<string>();
@@ -12,41 +15,25 @@ export class AssetMetadataRepository {
   private readonly metadataMap = new Map<string, AssetMetadata>();
 
   public async initialize(options: {
+    yearMonth: string;
     neighboringDir: string;
     publishingDir: string;
-    cacheFile: string;
     forceRefresh?: boolean;
   }): Promise<void> {
-    console.log("[Metadata] Initializing asset metadata repository");
-    if (!options.forceRefresh) {
-      this.loadCache(options.cacheFile);
-    }
-    const shouldRefresh = this.shouldRefreshFromSources(
-      options.cacheFile,
-      [options.neighboringDir, options.publishingDir],
-    ) || options.forceRefresh === true;
+    console.log("[Metadata] Loading monthly API metadata sources");
+    void options.forceRefresh;
 
-    if (shouldRefresh) {
-      this.neighboringAssets.clear();
-      this.publishingAssets.clear();
-      this.neighboringCustomIds.clear();
-      this.publishingCustomIds.clear();
-      this.metadataMap.clear();
-      const neighboringDir = path.resolve(options.neighboringDir);
-      const publishingDir = path.resolve(options.publishingDir);
-      if (neighboringDir === publishingDir) {
-        await this.scanDirectory(neighboringDir);
-      } else {
-        await this.scanDirectory(neighboringDir, "Neighboring");
-        await this.scanDirectory(publishingDir, "Publishing");
-      }
-      this.saveCache(options.cacheFile);
+    const neighboringDir = path.resolve(options.neighboringDir);
+    const publishingDir = path.resolve(options.publishingDir);
+    if (neighboringDir === publishingDir) {
+      await this.scanDirectory(neighboringDir, options.yearMonth);
     } else {
-      console.log("[Metadata] Cache is newer than source files. Skipping source rescan.");
+      await this.scanDirectory(neighboringDir, options.yearMonth, "Neighboring");
+      await this.scanDirectory(publishingDir, options.yearMonth, "Publishing");
     }
 
     console.log(
-      `[Metadata] Loaded ${this.metadataMap.size} assets. neighboring=${this.neighboringAssets.size}, publishing=${this.publishingAssets.size}`,
+      `[Metadata] Loaded ${this.metadataMap.size} assets from API files. neighboring=${this.neighboringAssets.size}, publishing=${this.publishingAssets.size}`,
     );
   }
 
@@ -54,207 +41,133 @@ export class AssetMetadataRepository {
     const metadata = this.metadataMap.get(assetId);
     if (metadata?.sourceCategory === "Publishing") return "Publishing";
     if (metadata?.sourceCategory === "Neighboring") return "Neighboring";
-
     if (this.publishingAssets.has(assetId)) return "Publishing";
     if (this.neighboringAssets.has(assetId)) return "Neighboring";
-
-    if (metadata) {
-      if (metadata.iswc || metadata.hfa || metadata.writers !== "Unidentified Writers") {
-        return "Publishing";
-      }
-      if (metadata.isrc || metadata.upc || metadata.artist !== "Various Artists") {
-        return "Neighboring";
-      }
-    }
-
+    if (metadata?.iswc || metadata?.hfa || metadata?.writers) return "Publishing";
+    if (metadata?.isrc || metadata?.upc || metadata?.artist) return "Neighboring";
     return "Unknown";
   }
 
   public classifyCustomId(customId: string): AssetCategory {
     const normalized = clean(customId);
-    if (!normalized) {
-      return "Unknown";
-    }
-    if (this.publishingCustomIds.has(normalized)) {
-      return "Publishing";
-    }
-    if (this.neighboringCustomIds.has(normalized)) {
-      return "Neighboring";
-    }
+    if (!normalized) return "Unknown";
+    if (this.publishingCustomIds.has(normalized)) return "Publishing";
+    if (this.neighboringCustomIds.has(normalized)) return "Neighboring";
     return "Unknown";
   }
 
   public getMetadata(assetId: string): AssetMetadata {
-    return this.metadataMap.get(assetId) ?? withMetadataFallbacks({ assetId });
+    return this.metadataMap.get(assetId) ?? normalizeMetadata({ assetId });
   }
 
-  private loadCache(cacheFile: string): void {
-    const cached = loadJsonRecord<AssetMetadata>(cacheFile);
-    for (const [assetId, metadata] of Object.entries(cached)) {
-      const normalized = withMetadataFallbacks({ ...metadata, assetId });
-      this.metadataMap.set(assetId, normalized);
-      if (normalized.sourceCategory === "Publishing") {
-        this.publishingAssets.add(assetId);
-        if (normalized.customId) {
-          this.publishingCustomIds.add(normalized.customId);
-        }
-      }
-      if (normalized.sourceCategory === "Neighboring") {
-        this.neighboringAssets.add(assetId);
-        if (normalized.customId) {
-          this.neighboringCustomIds.add(normalized.customId);
-        }
-      }
-      if (normalized.iswc || normalized.hfa || (normalized.writers && normalized.writers !== "Unidentified Writers" && !normalized.isrc)) {
-        this.publishingAssets.add(assetId);
-      }
-      if (normalized.isrc || normalized.upc) {
-        this.neighboringAssets.add(assetId);
-      }
-    }
-    console.log(`[Metadata] Cache loaded from ${cacheFile}. assets=${Object.keys(cached).length}`);
-  }
-
-  private saveCache(cacheFile: string): void {
-    const serialized: Record<string, AssetMetadata> = {};
-    for (const [assetId, metadata] of this.metadataMap.entries()) {
-      serialized[assetId] = metadata;
-    }
-    fs.writeFileSync(cacheFile, JSON.stringify(serialized, null, 2), "utf-8");
-    console.log(`[Metadata] Cache saved to ${cacheFile}`);
-  }
-
-  private shouldRefreshFromSources(cacheFile: string, directories: string[]): boolean {
-    if (!fs.existsSync(cacheFile)) {
-      return true;
-    }
-
-    if (this.hasSuspiciousEncodingInCache()) {
-      console.warn("[Metadata] Suspicious mojibake detected in cache. Refreshing from source files.");
-      return true;
-    }
-
-    const cacheStat = fs.statSync(cacheFile);
-    for (const directoryPath of directories) {
-      if (!fs.existsSync(directoryPath)) {
-        continue;
-      }
-
-      const files = fs
-        .readdirSync(directoryPath)
-        .filter((fileName) => fileName.endsWith(".csv") || fileName.endsWith(".txt"))
-        .map((fileName) => path.join(directoryPath, fileName));
-
-      for (const filePath of files) {
-        const fileStat = fs.statSync(filePath);
-        if (fileStat.mtimeMs > cacheStat.mtimeMs) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private hasSuspiciousEncodingInCache(): boolean {
-    let inspected = 0;
-    for (const metadata of this.metadataMap.values()) {
-      const probe = [metadata.title, metadata.artist, metadata.album, metadata.label, metadata.writers].join(" ");
-      if (probe.includes("�") || probe.includes("\uFFFD")) {
-        return true;
-      }
-      inspected += 1;
-      if (inspected >= 200) {
-        break;
-      }
-    }
-    return false;
-  }
-
-  private async scanDirectory(directoryPath: string, category?: AssetCategory): Promise<void> {
+  private async scanDirectory(directoryPath: string, yearMonth: string, category?: AssetCategory): Promise<void> {
     if (!fs.existsSync(directoryPath)) {
-      const categoryLabel = category ?? "shared metadata";
-      console.warn(`[Metadata] Skipping missing ${categoryLabel} directory: ${directoryPath}`);
-      return;
+      throw new Error(`[Metadata] Missing monthly API metadata directory: ${directoryPath}`);
     }
 
     const files = fs
       .readdirSync(directoryPath)
-      .filter((fileName) => fileName.endsWith(".csv") || fileName.endsWith(".txt"))
+      .filter((fileName) =>
+        fileName.startsWith(`${yearMonth}_content_owner_asset_a3_`) && fileName.endsWith(".csv"),
+      )
       .map((fileName) => path.join(directoryPath, fileName));
+    if (files.length === 0) {
+      throw new Error(`[Metadata] No ${yearMonth} API metadata file found: ${directoryPath}`);
+    }
 
-    console.log(`[Metadata] Scanning ${files.length} files in ${directoryPath}`);
     for (const filePath of files) {
       await this.scanMetadataFile(filePath, category);
     }
   }
 
   private async scanMetadataFile(filePath: string, category?: AssetCategory): Promise<void> {
-    const isTabSeparated = filePath.endsWith(".txt") || path.basename(filePath).includes("DSR");
-    const rows = await parseCsvRows(filePath, {
-      delimiter: isTabSeparated ? "\t" : ",",
-      encoding: "auto",
-    });
-
+    const rows = await parseCsvRows(filePath, { encoding: "auto" });
     let processedCount = 0;
+
     for (const row of rows) {
-      const assetId = findFirstValue(row, ["asset id"]);
-      if (!assetId) continue;
+      const candidates: Array<{ assetId: string; profile: MetadataProfile }> = category === "Publishing"
+        ? [
+            { assetId: findFirstValue(row, ["embedded composition asset id"]), profile: "publishingComposition" },
+            { assetId: findFirstValue(row, ["composition share asset id"]), profile: "publishingComposition" },
+            { assetId: findFirstValue(row, ["sr asset id"]), profile: "publishingRecording" },
+          ]
+        : [{ assetId: findFirstValue(row, ["asset id"]), profile: "general" }];
 
-      processedCount += 1;
-      if (category === "Neighboring") {
-        this.neighboringAssets.add(assetId);
-      } else if (category === "Publishing") {
-        this.publishingAssets.add(assetId);
-      }
-
-      const merged = this.mergeMetadata(assetId, row, category);
-      this.metadataMap.set(assetId, merged);
-      if (category === "Neighboring" && merged.customId) {
-        this.neighboringCustomIds.add(merged.customId);
-      } else if (category === "Publishing" && merged.customId) {
-        this.publishingCustomIds.add(merged.customId);
+      const seen = new Set<string>();
+      for (const candidate of candidates) {
+        const assetId = clean(candidate.assetId);
+        if (!assetId || seen.has(assetId)) continue;
+        seen.add(assetId);
+        processedCount += 1;
+        this.recordAsset(assetId, row, category, candidate.profile);
       }
     }
 
-    console.log(`[Metadata] ${path.basename(filePath)} processed rows=${processedCount}`);
+    console.log(`[Metadata] ${path.basename(filePath)} processed assets=${processedCount}`);
   }
 
-  private mergeMetadata(assetId: string, row: CsvRow, category?: AssetCategory): AssetMetadata {
-    const existing = this.metadataMap.get(assetId) ?? withMetadataFallbacks({ assetId });
-    const sourceCategory =
-      existing.sourceCategory === "Publishing" || category === "Publishing"
-        ? "Publishing"
-        : existing.sourceCategory === "Neighboring" || category === "Neighboring"
-          ? "Neighboring"
-          : undefined;
+  private recordAsset(
+    assetId: string,
+    row: CsvRow,
+    category: AssetCategory | undefined,
+    profile: MetadataProfile,
+  ): void {
+    if (category === "Neighboring") this.neighboringAssets.add(assetId);
+    if (category === "Publishing") this.publishingAssets.add(assetId);
 
-    return withMetadataFallbacks({
+    const merged = this.mergeMetadata(assetId, row, category, profile);
+    this.metadataMap.set(assetId, merged);
+    if (category === "Neighboring" && merged.customId) this.neighboringCustomIds.add(merged.customId);
+    if (category === "Publishing" && merged.customId) this.publishingCustomIds.add(merged.customId);
+  }
+
+  private mergeMetadata(
+    assetId: string,
+    row: CsvRow,
+    category: AssetCategory | undefined,
+    profile: MetadataProfile,
+  ): AssetMetadata {
+    const existing = this.metadataMap.get(assetId) ?? normalizeMetadata({ assetId });
+    const sourceCategory = category ?? existing.sourceCategory;
+    const composition = profile === "publishingComposition";
+    const recording = profile === "publishingRecording";
+
+    return normalizeMetadata({
+      ...existing,
       assetId,
       ...(sourceCategory ? { sourceCategory } : {}),
-      title: this.pick(existing.title, row, ["asset title", "title"]),
-      customId: this.pick(existing.customId, row, ["custom id"]),
-      isrc: this.pick(existing.isrc, row, ["isrc"]),
-      iswc: this.pick(existing.iswc, row, ["iswc"]),
-      hfa: this.pick(existing.hfa, row, ["hfa song code", "hfa"]),
-      upc: this.pick(existing.upc, row, ["upc"]),
-      writers: this.pick(existing.writers, row, ["writers", "writer", "composer", "author", "composerauthor"]),
-      artist: this.pick(existing.artist, row, ["artist", "artists", "display artist name", "displayartistname"]),
-      album: this.pick(existing.album, row, ["album"]),
-      label: this.pick(existing.label, row, ["label"]),
-      assetType: this.pick(existing.assetType, row, ["asset type"]),
+      title: this.pick(existing.title, row, composition
+        ? ["composition share title"]
+        : recording ? ["sr title"] : ["asset title"]),
+      customId: this.pick(existing.customId, row, composition
+        ? ["composition share custom id"]
+        : ["custom id"]),
+      isrc: this.pick(existing.isrc, row, recording
+        ? ["sr isrc"]
+        : profile === "general" ? ["display isrc", "your isrc", "other isrc"] : []),
+      iswc: this.pick(existing.iswc, row, composition ? ["composition share iswc"] : ["iswc"]),
+      hfa: this.pick(existing.hfa, row, composition ? ["composition share hfa song code"] : ["hfa song code"]),
+      upc: this.pick(existing.upc, row, profile === "general" ? ["upc"] : []),
+      writers: this.pick(existing.writers, row, profile === "general" ? ["writers"] : ["composition share writers"]),
+      artist: this.pick(existing.artist, row, recording ? ["sr artist"] : profile === "general" ? ["artist"] : []),
+      album: this.pick(existing.album, row, profile === "general" ? ["album"] : []),
+      label: this.pick(existing.label, row, profile === "general" ? ["label"] : []),
+      assetType: this.pick(existing.assetType, row, profile === "general" ? ["asset type"] : []),
       musicClaimType: this.pick(existing.musicClaimType, row, ["music claim type", "claim type"]),
-      compositionRightType: this.pick(
-        existing.compositionRightType,
-        row,
-        ["composition right type", "right type"],
-      ),
+      compositionRightType: this.pick(existing.compositionRightType, row, ["composition right type"]),
       channelId: this.pick(existing.channelId, row, ["asset channel id", "channel id"]),
     });
   }
 
   private pick(existingValue: string, row: CsvRow, aliases: string[]): string {
-    const discovered = findFirstValue(row, aliases);
-    return discovered || existingValue;
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeHeader(alias);
+      for (const [key, value] of Object.entries(row)) {
+        if (normalizeHeader(key) !== normalizedAlias) continue;
+        const discovered = clean(value);
+        if (discovered) return discovered;
+      }
+    }
+    return existingValue;
   }
 }

@@ -12,7 +12,6 @@ export interface AppConfig {
   excludeCountries: string[];
   reportDir: string;
   outputDir: string;
-  cacheFile: string;
 }
 
 let configCache: AppConfig | null = null;
@@ -53,7 +52,6 @@ export function loadConfig(): AppConfig {
     excludeCountries: (raw.excludeCountries ?? ["US"]).map((country) => country.toUpperCase()),
     reportDir: raw.reportDir ?? "reports",
     outputDir: raw.outputDir ?? ".",
-    cacheFile: raw.cacheFile ?? "asset_metadata_cache.json",
   };
 
   if (typeof raw.exchangeRate === "number") {

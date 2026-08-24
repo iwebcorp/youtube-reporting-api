@@ -63,6 +63,7 @@ export function getMonthlyPaths(yearMonth: string) {
     generalManagedDir: path.join("reports", "system-managed"),
     plaManagedDir: path.join("reports", "system-managed-pla"),
     assetMetadataDir: path.join("reports", "system-managed-assets"),
+    plaAssetMetadataDir: path.join("reports", "system-managed-assets-pla"),
     shortsRawDir: path.join("reports", `shorts-usage-${yearMonth}`),
     packageDir: `reports_final_${yearMonth}_client_pla_10files`,
     geDir: `reports_final_${yearMonth}_publishing_ge`,
@@ -133,6 +134,7 @@ export function checkManagedReadiness(
     ...GENERAL_REPORT_TYPES.map((reportType) => ({ directory: paths.generalManagedDir, reportType })),
     ...PLA_REPORT_TYPES.map((reportType) => ({ directory: paths.plaManagedDir, reportType })),
     { directory: paths.assetMetadataDir, reportType: ASSET_METADATA_REPORT_TYPE },
+    { directory: paths.plaAssetMetadataDir, reportType: ASSET_METADATA_REPORT_TYPE },
   ].filter(({ reportType }) => !OPTIONAL_MANAGED_REPORT_TYPES.has(reportType));
   const missing = requirements
     .filter(({ directory, reportType }) => !findManagedReport(directory, yearMonth, reportType))

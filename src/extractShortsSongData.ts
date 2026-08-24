@@ -45,9 +45,9 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const config = resolveExtractionConfig(parseCliArgs(cliArgs));
   const classifier = new AssetClassifier();
   await classifier.initialize({
+    yearMonth: config.yearMonth,
     neighboringDir: config.neighboringDir,
     publishingDir: config.publishingDir,
-    cacheFile: config.cacheFile,
   });
 
   const combinedFiles = listMonthlyCombinedReports(config.reportDir, config.yearMonth);

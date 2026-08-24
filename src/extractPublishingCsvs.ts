@@ -5,7 +5,7 @@ import { pathToFileURL } from "url";
 import iconv from "iconv-lite";
 import { AssetClassifier } from "./assetClassifier.js";
 import {
-  buildPublishingUsageCacheFromReports,
+  buildPublishingUsageStatsFromReports,
   parseCsvRows,
   parsePublishingFinancialFiles,
   parseRedSummaryFiles,
@@ -15,7 +15,6 @@ import {
   csvEscape,
   listMonthlyReportGroups,
   listMonthlySystemManagedFiles,
-  loadPublishingUsageCache,
   parseCliArgs,
   resolveExtractionConfig,
 } from "./reporting/utils.js";
@@ -23,7 +22,7 @@ import type {
   CsvRow,
   MonthlySummaryEntry,
   PublishingFinancialEntry,
-  PublishingUsageCacheEntry,
+  PublishingUsageStats,
   PublishingWriters,
   RedSummaryEntry,
 } from "./reporting/types.js";
@@ -32,8 +31,12 @@ interface MonthlyAdSummary {
   assetId: string;
   country: string;
   sourceTitle: string;
+  sourceAssetLabels: string;
   sourceCustomId: string;
   sourceIsrc: string;
+  sourceIswc: string;
+  sourceHfa: string;
+  sourceWriters: string;
   sourceAssetType: string;
   adRevenue: number;
   partnerRevenue: number;
@@ -664,26 +667,6 @@ function writePublishingDirectSources(outputDir: string, resolution: PublishingD
   }
 }
 
-function loadPublishingAssetIds(): Set<string> {
-  const filePath = path.resolve(process.cwd(), "publishing_asset_ids.json");
-  if (!fs.existsSync(filePath)) {
-    console.warn(`[Publishing] Missing publishing asset id file: ${filePath}`);
-    return new Set<string>();
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
-    if (!Array.isArray(parsed)) {
-      console.warn(`[Publishing] Invalid publishing asset id file: ${filePath}`);
-      return new Set<string>();
-    }
-    return new Set(parsed.map((value) => String(value).trim()).filter(Boolean));
-  } catch (error) {
-    console.warn(`[Publishing] Failed to read publishing asset ids from ${filePath}`, error);
-    return new Set<string>();
-  }
-}
-
 function isPublishingRecord(
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
@@ -714,7 +697,7 @@ function isPublishingRecord(
     return true;
   }
 
-  if (!metadata.isrc && metadata.writers !== "Unidentified Writers") {
+  if (!metadata.isrc && metadata.writers) {
     return true;
   }
 
@@ -723,7 +706,7 @@ function isPublishingRecord(
 
 function buildMonthlyAdSummary(
   financialMap: Map<string, PublishingFinancialEntry>,
-  usageMap: Map<string, PublishingUsageCacheEntry>,
+  usageMap: Map<string, PublishingUsageStats>,
   classifier: AssetClassifier,
   publishingAssetIds: Set<string>,
   includeAllSourceRows = false,
@@ -739,8 +722,12 @@ function buildMonthlyAdSummary(
       assetId: financial.assetId,
       country: financial.country,
       sourceTitle: financial.sourceTitle,
+      sourceAssetLabels: financial.sourceAssetLabels,
       sourceCustomId: financial.sourceCustomId,
       sourceIsrc: financial.sourceIsrc,
+      sourceIswc: financial.sourceIswc,
+      sourceHfa: financial.sourceHfa,
+      sourceWriters: financial.sourceWriters,
       sourceAssetType: financial.sourceAssetType,
       adRevenue: financial.totalRevenue,
       partnerRevenue: financial.partnerTotalRevenue,
@@ -797,14 +784,14 @@ function writeAdjustmentRow(
     row["country"]?.trim() || row["country_code"]?.trim() || "XX",
     assetId,
     csvEscape(rowTitle || metadata.title),
-    "",
+    row["asset_labels"]?.trim() ?? "",
     rowChannelId,
-    rowAssetType || metadata.assetType || "Composition",
+    rowAssetType || metadata.assetType,
     rowCustomId || metadata.customId,
     rowIsrc || metadata.isrc,
     rowIswc || metadata.iswc,
     rowHfa || metadata.hfa,
-    csvEscape(metadata.writers),
+    csvEscape(row["writers"]?.trim() || metadata.writers),
     row["owned_views"]?.trim() || "0",
     row["youtube_revenue_split_auction"]?.trim() || "0",
     row["youtube_revenue_split_reserved"]?.trim() || "0",
@@ -853,20 +840,17 @@ function writeMonthlyAdSummary(
     const title = summary.sourceTitle || metadata.title;
     const customId = summary.sourceCustomId || metadata.customId;
     const isrc = summary.sourceIsrc || metadata.isrc;
-    // Raw fallback path does not have a reliable Embedded/Cover classifier yet.
-    // Keep claim type explicit as unknown to avoid misleading downstream settlement data.
-    const musicClaimType = "unknown";
     const row = [
       summary.assetId,
-      "",
+      summary.sourceAssetLabels,
       customId,
-      metadata.iswc,
-      metadata.hfa,
+      summary.sourceIswc || metadata.iswc,
+      summary.sourceHfa || metadata.hfa,
       csvEscape(title),
-      csvEscape(metadata.writers),
-      musicClaimType,
+      csvEscape(summary.sourceWriters || metadata.writers),
+      metadata.musicClaimType,
       metadata.compositionRightType,
-      "100.00",
+      "",
       summary.country,
       String(totalViews),
       String(watchPageViews),
@@ -912,17 +896,17 @@ function writeMonthlySummary(
       summary.country,
       summary.assetId,
       csvEscape(title),
-      "",
+      summary.sourceAssetLabels,
       customId,
-      metadata.isrc,
-      metadata.iswc,
-      metadata.hfa,
-      csvEscape(metadata.writers),
-      metadata.compositionRightType,
-      "100.00",
-      summary.claimType || "UGC",
-      "Unknown",
-      summary.offer || "YouTube Premium Individual monthly",
+      summary.sourceIsrc || metadata.isrc,
+      summary.sourceIswc || metadata.iswc,
+      summary.sourceHfa || metadata.hfa,
+      csvEscape(summary.sourceWriters || metadata.writers),
+      summary.compositionRightType || metadata.compositionRightType,
+      summary.ownershipPercentage,
+      summary.claimQuality,
+      summary.revshareRateType,
+      summary.offer,
       String(summary.ownedViews),
       String(summary.monetizedViewsAudio),
       String(summary.monetizedViewsAudioVisual),
@@ -958,25 +942,15 @@ async function writeFinancialAdjustments(
 export async function runPublishingExtraction(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const cliOptions = parseCliArgs(cliArgs);
   const config = resolveExtractionConfig(cliOptions);
-  const directSources = resolvePublishingDirectSources(config.publishingDir, config.yearMonth);
-  const directSourceResolution = getPublishingDirectSourceResolution(directSources);
-  if (directSourceResolution.hasCompleteDirectSource) {
-    console.log(`[Publishing] Complete direct source set found in ${config.publishingDir}. Using source files for ${config.yearMonth}.`);
-    writePublishingDirectSources(config.outputDir, directSourceResolution);
-    console.log(`[Publishing] Completed direct source export for ${config.yearMonth} to ${config.outputDir}`);
-    return;
-  }
-  console.log(`[Publishing] No complete direct source set found in ${config.publishingDir}. Falling back to API export for ${config.yearMonth}.`);
 
   const withClassification = cliOptions.withClassification === true;
   const classifier = new AssetClassifier();
-  const publishingUsageFallback = loadPublishingUsageCache();
-  const publishingAssetIds = loadPublishingAssetIds();
+  const publishingAssetIds = new Set<string>();
 
   await classifier.initialize({
+    yearMonth: config.yearMonth,
     neighboringDir: config.neighboringDir,
     publishingDir: config.publishingDir,
-    cacheFile: config.cacheFile,
   });
 
   const writers = createPublishingWriters(config.outputDir);
@@ -990,11 +964,6 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
     console.log(`[Publishing] API-only export for ${config.yearMonth} from ${config.publishingSystemManagedDir}`);
     const isDedicatedPublisherSource = config.publishingSystemManagedDir !== config.systemManagedDir;
 
-    // TODO: Replace this raw fallback with a metadata-aware publishing reconstruction flow.
-    // The missing piece is the classification layer that separates Embedded vs Cover and
-    // determines whether a given claim type expands to Mechanical only or Mechanical+Performance.
-    // That relationship is not included in the raw revenue files below, so this exporter does
-    // not infer the classification automatically.
     const groups = listMonthlyReportGroups(config.reportDir, config.yearMonth);
     if (groups.length === 0) {
       console.warn(`[Publishing] No report files found for ${config.yearMonth} in ${config.reportDir}`);
@@ -1036,30 +1005,28 @@ export async function runPublishingExtraction(cliArgs: string[] = process.argv.s
       return;
     }
 
-    const usageDerived = await buildPublishingUsageCacheFromReports(usageFiles);
-    const usageByAsset = new Map<string, PublishingUsageCacheEntry>();
+    const usageDerived = await buildPublishingUsageStatsFromReports(usageFiles);
+    const usageByAsset = new Map<string, PublishingUsageStats>();
     for (const [usageKey, derived] of usageDerived.entries()) {
-      const [assetId] = usageKey.split("|");
-      const fallback = assetId ? publishingUsageFallback[assetId] : undefined;
       usageByAsset.set(usageKey, {
-        totalRevenue: fallback?.totalRevenue ?? 0,
-        adRevenue: fallback?.adRevenue ?? 0,
-        subRevenue: fallback?.subRevenue ?? 0,
-        totalViews: derived.totalViews || fallback?.totalViews || 0,
-        watchPageViews: derived.watchPageViews || fallback?.watchPageViews || 0,
-        embeddedViews: derived.embeddedViews || fallback?.embeddedViews || 0,
-        channelPageViews: derived.channelPageViews || fallback?.channelPageViews || 0,
-        liveViews: derived.liveViews || fallback?.liveViews || 0,
-        onDemandViews: derived.onDemandViews || fallback?.onDemandViews || derived.totalViews || 0,
-        adEnabledViews: derived.adEnabledViews || fallback?.adEnabledViews || derived.totalViews || 0,
-        adsenseRevenue: fallback?.adsenseRevenue ?? 0,
-        doubleclickServedYouTubeSoldRevenue: fallback?.doubleclickServedYouTubeSoldRevenue ?? 0,
-        doubleclickServedPartnerSoldRevenue: fallback?.doubleclickServedPartnerSoldRevenue ?? 0,
-        partnerServedPartnerSoldRevenue: fallback?.partnerServedPartnerSoldRevenue ?? 0,
-        partnerAdsenseRevenue: fallback?.partnerAdsenseRevenue ?? 0,
-        partnerDoubleclickServedYouTubeSoldRevenue: fallback?.partnerDoubleclickServedYouTubeSoldRevenue ?? 0,
-        partnerDoubleclickServedPartnerSoldRevenue: fallback?.partnerDoubleclickServedPartnerSoldRevenue ?? 0,
-        partnerPartnerServedPartnerSoldRevenue: fallback?.partnerPartnerServedPartnerSoldRevenue ?? 0,
+        totalRevenue: 0,
+        adRevenue: 0,
+        subRevenue: 0,
+        totalViews: derived.totalViews,
+        watchPageViews: derived.watchPageViews,
+        embeddedViews: derived.embeddedViews,
+        channelPageViews: derived.channelPageViews,
+        liveViews: derived.liveViews,
+        onDemandViews: derived.onDemandViews,
+        adEnabledViews: derived.adEnabledViews,
+        adsenseRevenue: 0,
+        doubleclickServedYouTubeSoldRevenue: 0,
+        doubleclickServedPartnerSoldRevenue: 0,
+        partnerServedPartnerSoldRevenue: 0,
+        partnerAdsenseRevenue: 0,
+        partnerDoubleclickServedYouTubeSoldRevenue: 0,
+        partnerDoubleclickServedPartnerSoldRevenue: 0,
+        partnerPartnerServedPartnerSoldRevenue: 0,
       });
     }
 

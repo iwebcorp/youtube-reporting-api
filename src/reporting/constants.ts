@@ -27,20 +27,3 @@ export const PUBLISHING_HEADERS = {
   monthlySubscription:
     "Asset Summary\nAdjustment Type,Month,Country,Asset ID,Asset Title,Asset Labels,Custom ID,ISRC,ISWC,HFA Song Code,Writers,Composition Right Type,Ownership Percentage,Claim Quality,Revshare Rate Type,Offer,Owned Views,Monetized Views : Audio,Monetized Views : Audio Visual,Monetized Views,YouTube Revenue Split,Partner Revenue : Pro Rata : Audio,Partner Revenue : Pro Rata : Audio Visual,Partner Revenue : Pro Rata,Partner Revenue : Per Sub Min,Partner Revenue\n",
 } as const;
-
-export const METADATA_FALLBACKS = {
-  title: "Untitled Asset",
-  customId: "",
-  isrc: "",
-  iswc: "",
-  hfa: "",
-  upc: "",
-  writers: "Unidentified Writers",
-  artist: "Various Artists",
-  album: "Unknown Album",
-  label: "Unknown Label",
-  assetType: "Sound Recording",
-  musicClaimType: "Music Video",
-  compositionRightType: "Mechanical; Performing",
-  channelId: "",
-} as const;

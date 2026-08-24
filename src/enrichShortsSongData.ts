@@ -111,7 +111,7 @@ async function run(argv: string[] = process.argv.slice(2)): Promise<void> {
     if (override) {
       matchedAssets.add(assetId);
       if (override.title) {
-        if (!row["Asset Title"] || row["Asset Title"] === "Untitled Asset") titleFilled += 1;
+        if (!row["Asset Title"]) titleFilled += 1;
         row["Asset Title"] = override.title;
       }
       if (override.customId) {

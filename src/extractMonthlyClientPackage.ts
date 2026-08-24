@@ -11,7 +11,6 @@ function buildForwardArgs(config: ReturnType<typeof resolveExtractionConfig>): s
     `--outputDir=${config.outputDir}`,
     `--neighboringDir=${config.neighboringDir}`,
     `--publishingDir=${config.publishingDir}`,
-    `--cacheFile=${config.cacheFile}`,
     `--systemManagedDir=${config.systemManagedDir}`,
     `--publishingSystemManagedDir=${config.publishingSystemManagedDir}`,
     `--sampleDir=${config.sampleDir}`,

@@ -27,7 +27,6 @@ export interface ExtractionCliOptions {
   outputDir?: string;
   neighboringDir?: string;
   publishingDir?: string;
-  cacheFile?: string;
   systemManagedDir?: string;
   publishingSystemManagedDir?: string;
   sampleDir?: string;
@@ -40,7 +39,6 @@ export interface ExtractionConfig {
   outputDir: string;
   neighboringDir: string;
   publishingDir: string;
-  cacheFile: string;
   systemManagedDir: string;
   publishingSystemManagedDir: string;
   sampleDir: string;
@@ -104,17 +102,7 @@ export interface PublishingWriters {
   monthlySubscription: NodeJS.WritableStream;
 }
 
-export interface NeighboringUsageCacheEntry {
-  total: number;
-  watchPage: number;
-  embedded: number;
-  channelPage: number;
-  live: number;
-  onDemand: number;
-  adEnabled: number;
-}
-
-export interface PublishingUsageCacheEntry {
+export interface PublishingUsageStats {
   totalRevenue: number;
   adRevenue: number;
   subRevenue: number;
@@ -139,8 +127,12 @@ export interface PublishingFinancialEntry {
   assetId: string;
   country: string;
   sourceTitle: string;
+  sourceAssetLabels: string;
   sourceCustomId: string;
   sourceIsrc: string;
+  sourceIswc: string;
+  sourceHfa: string;
+  sourceWriters: string;
   sourceAssetType: string;
   ownedViews: number;
   adsenseRevenue: number;
@@ -160,9 +152,13 @@ export interface RedSummaryEntry {
   country: string;
   adjustmentType: string;
   sourceTitle: string;
+  sourceAssetLabels: string;
   sourceAssetType: string;
   sourceCustomId: string;
   sourceIsrc: string;
+  sourceIswc: string;
+  sourceHfa: string;
+  sourceWriters: string;
   sourceUpc: string;
   sourceGrid: string;
   sourceArtist: string;
@@ -181,6 +177,10 @@ export interface RedSummaryEntry {
   offer: string;
   contentType: string;
   claimType: string;
+  compositionRightType: string;
+  ownershipPercentage: string;
+  claimQuality: string;
+  revshareRateType: string;
 }
 
 export interface AudioTierDetailEntry {
