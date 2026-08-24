@@ -33,17 +33,18 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 ## 생성 결과
 
-정산 대상이 `202607`이면 전달용 폴더는 `reports_final_202607_client_pla_9files`로 생성됩니다.
+정산 대상이 `202607`이면 전달용 폴더는 `reports_final_202607_client_pla_10files`로 생성됩니다.
 
 1. `1_neighboring_daily_ad.csv`.
 2. `2_neighboring_daily_ad_adj.csv`.
 3. `3_neighboring_monthly_sub.csv`.
 4. `4_neighboring_financial_detail.csv`.
-5. `1_publishing_daily_ad.csv`.
-6. `2_publishing_daily_ad_adj.csv`.
-7. `3_publishing_monthly_sub.csv`.
-8. `5_publishing_shorts_revenue_summary.csv`.
-9. `6_shorts_video_usage_detail.csv`.
+5. `5_neighboring_payment_summary.csv`.
+6. `1_publishing_daily_ad.csv`.
+7. `2_publishing_daily_ad_adj.csv`.
+8. `3_publishing_monthly_sub.csv`.
+9. `5_publishing_shorts_revenue_summary.csv`.
+10. `6_shorts_video_usage_detail.csv`.
 
 GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생성됩니다.
 
@@ -52,7 +53,7 @@ GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생
 ## 데이터 보관
 
 - `reports` 폴더에는 API에서 내려받은 원천 데이터가 저장됩니다.
-- `reports_final_YYYYMM_client_pla_9files` 폴더에는 광수미디어 전달용 9개 파일이 저장됩니다.
+- `reports_final_YYYYMM_client_pla_10files` 폴더에는 광수미디어 전달용 10개 파일이 저장됩니다.
 - `reports_final_YYYYMM_publishing_ge` 폴더에는 GE 총액 요약이 저장됩니다.
 - 다음 달 추출이 끝났다고 이전 달 원천 데이터와 산출물을 바로 삭제하지 마십시오.
 

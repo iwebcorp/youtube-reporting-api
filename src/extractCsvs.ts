@@ -555,12 +555,22 @@ export async function runNeighboringExtraction(cliArgs: string[] = process.argv.
       config.yearMonth,
       "content_owner_claim_audio_tier_revenue_raw_a1",
     );
+    const paymentSummaryFiles = listMonthlySystemManagedFiles(
+      config.systemManagedDir,
+      config.yearMonth,
+      "content_owner_payments_summary_a1",
+    );
+    const paymentSummaryFile = paymentSummaryFiles[paymentSummaryFiles.length - 1];
+    if (!paymentSummaryFile) {
+      throw new Error(`[Neighboring] Missing payment summary for ${config.yearMonth}`);
+    }
 
     await writeAdvertisingReports(adFiles, adAdjustmentFiles, config.yearMonth, classifier, publishingAssetIds, writers);
     const redMap = await parseRedSummaryFiles([...redFiles, ...redAdjustmentFiles]);
     writeNeighboringMonthlySummary(redMap, config.yearMonth, classifier, publishingAssetIds, writers);
     const audioDetails = await parseAudioTierDetailFiles(audioTierFiles);
     writeNeighboringFinancialDetail(audioDetails, classifier, publishingAssetIds, writers);
+    fs.copyFileSync(paymentSummaryFile, path.join(config.outputDir, "5_neighboring_payment_summary.csv"));
     console.log(`[Neighboring] Completed export for ${config.yearMonth} to ${config.outputDir}`);
   } finally {
     await closeWriters(Object.values(writers));

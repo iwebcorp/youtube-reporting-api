@@ -10,6 +10,7 @@ export const GENERAL_REPORT_TYPES = [
   "content_owner_claim_audio_tier_revenue_raw_a1",
   "content_owner_claim_audio_tier_revenue_summary_a1",
   "music_content_owner_shorts_revenue_summary_a1",
+  "content_owner_payments_summary_a1",
 ] as const;
 
 export const PLA_REPORT_TYPES = [
@@ -21,6 +22,11 @@ export const PLA_REPORT_TYPES = [
 ] as const;
 
 export const ASSET_METADATA_REPORT_TYPE = "content_owner_asset_a3";
+const OPTIONAL_MANAGED_REPORT_TYPES = new Set<string>([
+  "content_owner_asset_ad_adjustment_revenue_raw_a1",
+  "music_content_owner_asset_red_adjustment_revenue_raw_a1",
+  "publisher_content_owner_asset_red_adjustment_revenue_raw_a1",
+]);
 export const SHORTS_VIDEO_FILE = "6_shorts_video_usage_detail.csv";
 export const PACKAGE_FILES = [
   "1_neighboring_daily_ad.csv",
@@ -30,6 +36,7 @@ export const PACKAGE_FILES = [
   "3_neighboring_monthly_sub.csv",
   "3_publishing_monthly_sub.csv",
   "4_neighboring_financial_detail.csv",
+  "5_neighboring_payment_summary.csv",
   "5_publishing_shorts_revenue_summary.csv",
   SHORTS_VIDEO_FILE,
 ] as const;
@@ -57,7 +64,7 @@ export function getMonthlyPaths(yearMonth: string) {
     plaManagedDir: path.join("reports", "system-managed-pla"),
     assetMetadataDir: path.join("reports", "system-managed-assets"),
     shortsRawDir: path.join("reports", `shorts-usage-${yearMonth}`),
-    packageDir: `reports_final_${yearMonth}_client_pla_9files`,
+    packageDir: `reports_final_${yearMonth}_client_pla_10files`,
     geDir: `reports_final_${yearMonth}_publishing_ge`,
   };
 }
@@ -126,7 +133,7 @@ export function checkManagedReadiness(
     ...GENERAL_REPORT_TYPES.map((reportType) => ({ directory: paths.generalManagedDir, reportType })),
     ...PLA_REPORT_TYPES.map((reportType) => ({ directory: paths.plaManagedDir, reportType })),
     { directory: paths.assetMetadataDir, reportType: ASSET_METADATA_REPORT_TYPE },
-  ];
+  ].filter(({ reportType }) => !OPTIONAL_MANAGED_REPORT_TYPES.has(reportType));
   const missing = requirements
     .filter(({ directory, reportType }) => !findManagedReport(directory, yearMonth, reportType))
     .map(({ directory, reportType }) => path.join(directory, `${yearMonth}_${reportType}_*.csv`));

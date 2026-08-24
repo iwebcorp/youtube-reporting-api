@@ -6,8 +6,11 @@ cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 goto node_missing
 if not exist credentials.json goto credentials_missing
+if exist "node_modules\tsx\dist\cli.mjs" goto launch
 call npm.cmd ci
 if errorlevel 1 goto install_failed
+
+:launch
 call start-gui.cmd
 exit /b %errorlevel%
 
