@@ -1,4 +1,4 @@
-// 대상 월 하나로 API 다운로드부터 최종 산출물 11개까지 실행하는 월별 실행기
+// 대상 월 하나로 API 다운로드부터 최종 산출물 11개와 정산금 계산까지 실행하는 월별 실행기
 import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
@@ -9,15 +9,19 @@ import {
   PLA_REPORT_TYPES,
   SHORTS_VIDEO_FILE,
   checkManagedReadiness,
+  checkOutputReadiness,
   checkRawReadiness,
+  contentIdCustomIdFileName,
+  getCustomIdWarning,
   getMonthlyPaths,
   isValidYearMonth,
+  type MonthlyPaths,
 } from "./monthlyReadiness.js";
 
 const GENERAL_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 const PLA_CONTENT_OWNER_ID = "C9wllE5I6sRtJdunaUAdqQ";
-type SettlementStep = "raw" | "managed" | "extract";
-const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
+type SettlementStep = "raw" | "managed" | "extract" | "settle";
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
 
 async function resolveYearMonth(argv: string[]): Promise<string> {
   const option = argv.find((argument) => argument.startsWith("--yearMonth="));
@@ -53,6 +57,14 @@ function resolveSteps(argv: string[]): Set<SettlementStep> {
     throw new Error(`[MonthlySettlement] Invalid steps: ${invalid.join(", ") || "empty"}.`);
   }
   return new Set(values as SettlementStep[]);
+}
+
+function resolveExchangeRate(argv: string[], steps: Set<SettlementStep>): string {
+  const exchangeRate = argv.find((argument) => argument.startsWith("--exchangeRate="))?.slice("--exchangeRate=".length).trim() ?? "";
+  if (steps.has("settle") && !/^\d+(\.\d+)?$/.test(exchangeRate.replace(/,/g, ""))) {
+    throw new Error("[MonthlySettlement] 정산금 계산에는 환율(원/USD)이 필요합니다. 예: --exchangeRate=1385.2");
+  }
+  return exchangeRate.replace(/,/g, "");
 }
 
 async function runTsxStep(label: string, scriptPath: string, args: string[]): Promise<void> {
@@ -107,8 +119,9 @@ async function run(): Promise<void> {
   const argv = process.argv.slice(2);
   const yearMonth = await resolveYearMonth(argv);
   const steps = resolveSteps(argv);
+  const exchangeRate = resolveExchangeRate(argv, steps);
   const paths = getMonthlyPaths(yearMonth);
-  const { packageDir, geDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
+  const { assetMetadataDir, plaAssetMetadataDir } = paths;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
 
   console.log(`[MonthlySettlement] Selected stages: ${[...steps].join(", ")}`);
@@ -150,6 +163,33 @@ async function run(): Promise<void> {
       `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
       "--latestOnly",
     ]);
+    const downloaded = checkManagedReadiness(yearMonth, paths);
+    const pendingDownloads = downloaded.missing.filter(
+      (filePath) => path.basename(filePath) !== contentIdCustomIdFileName(yearMonth),
+    );
+    if (pendingDownloads.length > 0 || downloaded.partial.length > 0) {
+      throw new Error(`[MonthlySettlement] System-managed data incomplete: ${downloaded.present}/${downloaded.expected}. Reports may not be released yet.`);
+    }
+    const extractionDirArgs = [
+      commonMonthArg,
+      `--reportDir=${paths.reportDir}`,
+      `--systemManagedDir=${paths.generalManagedDir}`,
+      `--publishingSystemManagedDir=${paths.plaManagedDir}`,
+      `--neighboringDir=${assetMetadataDir}`,
+      `--publishingDir=${plaAssetMetadataDir}`,
+    ];
+    await runTsxStep("일반 자산 Custom ID Content ID 조회", "src/resolveContentIdCustomIds.ts", [
+      ...extractionDirArgs,
+      `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
+      "--category=Neighboring",
+      `--contentIdDir=${assetMetadataDir}`,
+    ]);
+    await runTsxStep("PLA 자산 Custom ID Content ID 조회", "src/resolveContentIdCustomIds.ts", [
+      ...extractionDirArgs,
+      `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
+      "--category=Publishing",
+      `--contentIdDir=${plaAssetMetadataDir}`,
+    ]);
     const managed = checkManagedReadiness(yearMonth, paths);
     if (!managed.ready) {
       throw new Error(`[MonthlySettlement] System-managed data incomplete: ${managed.present}/${managed.expected}. Reports may not be released yet.`);
@@ -157,11 +197,43 @@ async function run(): Promise<void> {
     console.log("[MonthlySettlement] STAGE managed COMPLETE");
   }
 
-  if (!steps.has("extract")) {
-    console.log(`\n[MonthlySettlement] Selected stages completed for ${yearMonth}.`);
-    return;
+  if (steps.has("extract")) {
+    await runExtractStage(yearMonth, paths);
   }
 
+  if (steps.has("settle")) {
+    await runSettleStage(yearMonth, paths, exchangeRate);
+  }
+  console.log(`\n[MonthlySettlement] Selected stages completed for ${yearMonth}.`);
+}
+
+function logCustomIdWarning(yearMonth: string, paths: MonthlyPaths): void {
+  const customIdWarning = getCustomIdWarning(yearMonth, paths);
+  if (customIdWarning && customIdWarning.blankRows > 0) {
+    console.warn(
+      `[MonthlySettlement] 경고: Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)은 API로 받을 수 없어 직접 입력이 필요합니다. 목록: ${customIdWarning.filePath}`,
+    );
+  }
+  if (customIdWarning && customIdWarning.noteRows > 0) {
+    console.warn(
+      `[MonthlySettlement] 참고: CMS에 Custom ID가 여러 개 등록된 곡 ${customIdWarning.noteAssets}개가 목록에 있습니다. 목록: ${customIdWarning.filePath}`,
+    );
+  }
+}
+
+function customIdCheckArgs(yearMonth: string, paths: MonthlyPaths): string[] {
+  return [
+    `--yearMonth=${yearMonth}`,
+    `--reportDir=${paths.reportDir}`,
+    `--neighboringDir=${paths.assetMetadataDir}`,
+    `--publishingDir=${paths.plaAssetMetadataDir}`,
+    `--outputDir=${paths.packageDir}`,
+  ];
+}
+
+async function runExtractStage(yearMonth: string, paths: MonthlyPaths): Promise<void> {
+  const { packageDir, geDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
+  const commonMonthArg = `--yearMonth=${yearMonth}`;
   const raw = checkRawReadiness(yearMonth, paths);
   const managed = checkManagedReadiness(yearMonth, paths);
   if (!raw.ready || !managed.ready) {
@@ -200,11 +272,32 @@ async function run(): Promise<void> {
   ]);
 
   verifyOutputs(packageDir, geDir);
+  await runTsxStep("Custom ID 확인 목록 생성", "src/checkPackageCustomIds.ts", customIdCheckArgs(yearMonth, paths));
   console.log("[MonthlySettlement] STAGE extract COMPLETE");
-  console.log(`\n[MonthlySettlement] Completed ${yearMonth}.`);
   console.log("[MonthlySettlement] Generated 11 final output files: 10 client files + 1 GE summary.");
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);
+  logCustomIdWarning(yearMonth, paths);
+}
+
+// 사용자가 Custom ID 공란을 채운 정산 파일로 정산금을 계산한다. 남은 공란은 경고만 하고 계산한다.
+async function runSettleStage(yearMonth: string, paths: MonthlyPaths, exchangeRate: string): Promise<void> {
+  const extract = checkOutputReadiness(yearMonth, paths);
+  if (!extract.ready) {
+    throw new Error(`[MonthlySettlement] 정산금 계산에는 추출된 정산 파일이 필요합니다. ${extract.present}/${extract.expected}`);
+  }
+
+  console.log("\n[MonthlySettlement] STAGE settle START");
+  await runTsxStep("Custom ID 공란 다시 확인", "src/checkPackageCustomIds.ts", customIdCheckArgs(yearMonth, paths));
+  logCustomIdWarning(yearMonth, paths);
+  await runTsxStep("정산금 계산", "src/calculateSettlement.ts", [
+    `--yearMonth=${yearMonth}`,
+    `--exchangeRate=${exchangeRate}`,
+    `--packageDir=${paths.packageDir}`,
+    `--outputDir=${paths.settlementDir}`,
+  ]);
+  console.log("[MonthlySettlement] STAGE settle COMPLETE");
+  console.log(`[MonthlySettlement] Settlement: ${paths.settlementDir}`);
 }
 
 run().catch((error) => {

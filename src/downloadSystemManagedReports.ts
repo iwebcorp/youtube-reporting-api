@@ -5,6 +5,7 @@ import { google } from "googleapis";
 import { getAuthClient } from "./auth.js";
 import { parseCliArgs, resolveExtractionConfig, ensureDirectory, clean } from "./reporting/utils.js";
 import { loadConfig } from "./configLoader.js";
+import { getErrorMessage, isDeletedOAuthClientError, withRetries } from "./reporting/retry.js";
 
 const DEFAULT_REPORT_TYPES = [
   "content_owner_asset_ad_revenue_raw_a1",
@@ -18,7 +19,6 @@ const DEFAULT_REPORT_TYPES = [
 ];
 const MAX_DOWNLOAD_ATTEMPTS = 5;
 const MAX_API_ATTEMPTS = 5;
-const BASE_RETRY_DELAY_MS = 1500;
 
 function parseReportTypeIds(argv: string[]): string[] {
   const explicit = argv
@@ -98,70 +98,6 @@ async function downloadFile(
   });
 
   fs.renameSync(partialPath, outputPath);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
-function isDeletedOAuthClientError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
-  if (message.includes("deleted_client")) {
-    return true;
-  }
-  try {
-    return JSON.stringify(error).toLowerCase().includes("deleted_client");
-  } catch {
-    return false;
-  }
-}
-
-function isRetryableError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code).toLowerCase() : "";
-  const status =
-    typeof error === "object" && error !== null && "status" in error ? Number(error.status) : undefined;
-
-  return (
-    ["econnreset", "etimedout", "eai_again", "socket hang up", "timeout", "503", "502", "500"].some((token) =>
-      message.includes(token) || code.includes(token),
-    ) ||
-    (status !== undefined && [429, 500, 502, 503, 504].includes(status))
-  );
-}
-
-async function withRetries<T>(
-  label: string,
-  maxAttempts: number,
-  fn: (attempt: number) => Promise<T>,
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await fn(attempt);
-    } catch (error) {
-      lastError = error;
-      const retryable = isRetryableError(error);
-      if (!retryable || attempt === maxAttempts) {
-        throw error;
-      }
-
-      const delayMs = BASE_RETRY_DELAY_MS * attempt;
-      console.warn(
-        `[Retry] ${label} failed on attempt ${attempt}/${maxAttempts}: ${getErrorMessage(error)}. Retrying in ${delayMs}ms.`,
-      );
-      await sleep(delayMs);
-    }
-  }
-
-  throw lastError;
 }
 
 async function run(): Promise<void> {

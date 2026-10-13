@@ -24,6 +24,7 @@
         </div>
         <div class="actions">
           <button id="openButton" class="button secondary" type="button">결과 폴더 열기</button>
+          <button id="openSettlementButton" class="button secondary" type="button">정산금 폴더 열기</button>
           <button id="stopButton" class="button danger" type="button" disabled>중지</button>
           <button id="runButton" class="button primary" type="button">선택 단계 실행</button>
         </div>
@@ -57,7 +58,25 @@
           </span>
           <span class="stage-status loading">확인 중</span>
         </label>
+        <label class="stage-row" data-stage="settle">
+          <input type="checkbox" value="settle" />
+          <span class="stage-index">04</span>
+          <span class="stage-copy">
+            <strong>정산금 계산</strong>
+            <span>Custom ID를 채운 정산 파일로 인접·저작·실연권료 계산</span>
+          </span>
+          <span id="rateControl" class="rate-control">
+            <span>환율 (원/USD)</span>
+            <input id="exchangeRate" type="text" inputmode="decimal" placeholder="예: 1385.20" autocomplete="off" />
+          </span>
+          <span class="stage-status loading">확인 중</span>
+        </label>
       </section>
+
+      <div id="customIdWarning" class="custom-id-warning" role="alert" hidden>
+        <p id="customIdWarningText"></p>
+        <button id="openCustomIdButton" class="button secondary" type="button">Custom ID 확인 목록 열기</button>
+      </div>
 
       <p id="notice" class="notice" role="status"></p>
 

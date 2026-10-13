@@ -2,6 +2,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { AssetCategory, AssetMetadata, CsvRow } from "./types.js";
+import { contentIdCustomIdFileName } from "../monthlyReadiness.js";
 import { parseCsvRows } from "./parsers.js";
 import { clean, findFirstValue, normalizeHeader, normalizeMetadata } from "./utils.js";
 
@@ -13,12 +14,15 @@ export class AssetMetadataRepository {
   private readonly neighboringCustomIds = new Set<string>();
   private readonly publishingCustomIds = new Set<string>();
   private readonly metadataMap = new Map<string, AssetMetadata>();
+  // 곡(embedded composition) 자산별로 연결된 지분 자산의 Custom ID 목록
+  private readonly compositionShareCustomIds = new Map<string, Set<string>>();
 
   public async initialize(options: {
     yearMonth: string;
     neighboringDir: string;
     publishingDir: string;
     forceRefresh?: boolean;
+    includeContentIdCustomIds?: boolean;
   }): Promise<void> {
     console.log("[Metadata] Loading monthly API metadata sources");
     void options.forceRefresh;
@@ -30,6 +34,10 @@ export class AssetMetadataRepository {
     } else {
       await this.scanDirectory(neighboringDir, options.yearMonth, "Neighboring");
       await this.scanDirectory(publishingDir, options.yearMonth, "Publishing");
+    }
+    this.clearAmbiguousCompositionCustomIds();
+    if (options.includeContentIdCustomIds !== false) {
+      await this.applyContentIdCustomIds(options.yearMonth, neighboringDir, publishingDir);
     }
 
     console.log(
@@ -56,8 +64,57 @@ export class AssetMetadataRepository {
     return "Unknown";
   }
 
+  public getCompositionShareCustomIds(assetId: string): string[] {
+    return [...(this.compositionShareCustomIds.get(assetId) ?? [])].sort();
+  }
+
+  // 지분 Custom ID가 여러 개인 곡은 어느 값이 맞는지 메타데이터만으로 정할 수 없으므로 비워 둔다.
+  private clearAmbiguousCompositionCustomIds(): void {
+    let clearedCount = 0;
+    for (const [assetId, customIds] of this.compositionShareCustomIds) {
+      const metadata = this.metadataMap.get(assetId);
+      if (customIds.size < 2 || !metadata?.customId) continue;
+      this.metadataMap.set(assetId, { ...metadata, customId: "" });
+      clearedCount += 1;
+    }
+    console.log(`[Metadata] Cleared ${clearedCount} composition custom ids with multiple share custom ids`);
+  }
+
   public getMetadata(assetId: string): AssetMetadata {
     return this.metadataMap.get(assetId) ?? normalizeMetadata({ assetId });
+  }
+
+  // a3 스냅샷에 Custom ID가 없는 자산만 같은 달 Content ID API 조회 결과로 채운다.
+  private async applyContentIdCustomIds(yearMonth: string, neighboringDir: string, publishingDir: string): Promise<void> {
+    const loadFile = async (directoryPath: string): Promise<Map<string, string>> => {
+      const filePath = path.join(directoryPath, contentIdCustomIdFileName(yearMonth));
+      const customIds = new Map<string, string>();
+      if (!fs.existsSync(filePath)) {
+        console.warn(`[Metadata] Content ID custom id file not found: ${filePath}`);
+        return customIds;
+      }
+      for (const row of await parseCsvRows(filePath)) {
+        const assetId = clean(row["asset_id"]);
+        const customId = clean(row["custom_id"]);
+        if (assetId && customId) customIds.set(assetId, customId);
+      }
+      return customIds;
+    };
+
+    const neighboringCustomIds = await loadFile(neighboringDir);
+    const publishingCustomIds = neighboringDir === publishingDir ? new Map<string, string>() : await loadFile(publishingDir);
+    let filledCount = 0;
+    for (const assetId of new Set([...neighboringCustomIds.keys(), ...publishingCustomIds.keys()])) {
+      const existing = this.metadataMap.get(assetId) ?? normalizeMetadata({ assetId });
+      if (existing.customId) continue;
+      const customId = existing.sourceCategory === "Publishing"
+        ? publishingCustomIds.get(assetId) ?? neighboringCustomIds.get(assetId)
+        : neighboringCustomIds.get(assetId) ?? publishingCustomIds.get(assetId);
+      if (!customId) continue;
+      this.metadataMap.set(assetId, { ...existing, customId });
+      filledCount += 1;
+    }
+    console.log(`[Metadata] Filled ${filledCount} custom ids from Content ID API lookups`);
   }
 
   private async scanDirectory(directoryPath: string, yearMonth: string, category?: AssetCategory): Promise<void> {
@@ -112,8 +169,21 @@ export class AssetMetadataRepository {
     category: AssetCategory | undefined,
     profile: MetadataProfile,
   ): void {
+    // PLA 메타데이터의 음원(sr_asset_id)은 곡이 들어간 일반 CMS 음원이므로 이미 확인된 분류를 덮지 않는다.
+    const existingCategory = this.metadataMap.get(assetId)?.sourceCategory;
+    if (profile === "publishingRecording" && existingCategory) category = existingCategory;
+
     if (category === "Neighboring") this.neighboringAssets.add(assetId);
     if (category === "Publishing") this.publishingAssets.add(assetId);
+
+    if (profile === "publishingComposition") {
+      const shareCustomId = findFirstValue(row, ["composition share custom id"]);
+      if (shareCustomId) {
+        const customIds = this.compositionShareCustomIds.get(assetId) ?? new Set<string>();
+        customIds.add(shareCustomId);
+        this.compositionShareCustomIds.set(assetId, customIds);
+      }
+    }
 
     const merged = this.mergeMetadata(assetId, row, category, profile);
     this.metadataMap.set(assetId, merged);
