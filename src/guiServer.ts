@@ -245,6 +245,23 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/open-custom-id") {
+    const body = await readJsonBody(request) as { yearMonth?: unknown };
+    const yearMonth = typeof body.yearMonth === "string" ? body.yearMonth : "";
+    if (!isValidYearMonth(yearMonth)) {
+      sendJson(response, 400, { error: "yearMonth must use YYYYMM." });
+      return;
+    }
+    const warning = getMonthlyReadiness(yearMonth).customIdWarning;
+    if (!warning) {
+      sendJson(response, 404, { error: "Custom ID 확인 목록이 없습니다." });
+      return;
+    }
+    openPath(warning.filePath);
+    sendJson(response, 200, { opened: true });
+    return;
+  }
+
   sendJson(response, 404, { error: "Not found." });
 }
 

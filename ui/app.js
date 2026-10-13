@@ -7,6 +7,9 @@ const clearButton = document.querySelector("#clearButton");
 const logOutput = document.querySelector("#logOutput");
 const notice = document.querySelector("#notice");
 const runBadge = document.querySelector("#runBadge");
+const customIdWarning = document.querySelector("#customIdWarning");
+const customIdWarningText = document.querySelector("#customIdWarningText");
+const openCustomIdButton = document.querySelector("#openCustomIdButton");
 const stageInputs = [...document.querySelectorAll('.stage-row input[type="checkbox"]')];
 let readiness = null;
 let runState = { running: false };
@@ -37,6 +40,19 @@ function renderReadiness() {
   setStatus("raw", readiness.raw.ready ? `준비 완료 ${readiness.raw.present}/${readiness.raw.expected}` : `${readiness.raw.present}/${readiness.raw.expected}`, readiness.raw.ready ? "ready" : "missing");
   setStatus("managed", readiness.managed.ready ? `준비 완료 ${readiness.managed.present}/${readiness.managed.expected}` : `${readiness.managed.present}/${readiness.managed.expected}`, readiness.managed.ready ? "ready" : "missing");
   setStatus("extract", readiness.extract.ready ? `생성 완료 ${readiness.extract.present}/${readiness.extract.expected}` : "생성 필요", readiness.extract.ready ? "ready" : "waiting");
+
+  const warning = readiness.customIdWarning;
+  customIdWarning.hidden = !warning;
+  if (warning) {
+    const messages = [];
+    if (warning.blankRows > 0) {
+      messages.push(`Custom ID 공란 ${warning.blankRows}행(자산 ${warning.blankAssets}개)은 YouTube CMS에 등록된 값이 없어 API로 받을 수 없습니다. 목록의 파일·행·열 위치에 직접 입력해 주세요.`);
+    }
+    if (warning.noteRows > 0) {
+      messages.push(`참고: CMS에 Custom ID가 여러 개 등록된 곡 ${warning.noteAssets}개는 정산 보고서 값을 사용했습니다. CMS 정리가 필요한지 목록에서 확인해 주세요.`);
+    }
+    customIdWarningText.textContent = messages.join(" ");
+  }
 }
 
 function renderRunState() {
@@ -127,6 +143,14 @@ stopButton.addEventListener("click", async () => {
 openButton.addEventListener("click", async () => {
   try {
     await postJson("/api/open-output", { yearMonth: compactMonth() });
+  } catch (error) {
+    notice.textContent = error.message;
+  }
+});
+
+openCustomIdButton.addEventListener("click", async () => {
+  try {
+    await postJson("/api/open-custom-id", { yearMonth: compactMonth() });
   } catch (error) {
     notice.textContent = error.message;
   }

@@ -66,6 +66,10 @@ function createCsvStream(filePath: string, encoding: BufferEncoding | "cp949", d
   ) as AsyncIterable<CsvRow>;
 }
 
+export function streamCsvRows(filePath: string): AsyncIterable<CsvRow> {
+  return createCsvStream(filePath, "utf-8");
+}
+
 export async function parseCsvRows(
   filePath: string,
   options: { encoding?: BufferEncoding | "cp949" | "auto"; delimiter?: "," | "\t" } = {},

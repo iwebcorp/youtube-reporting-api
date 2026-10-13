@@ -1,6 +1,7 @@
 // 월별 정산 단계에 필요한 실제 파일 준비 상태를 검사하는 모듈
 import * as fs from "fs";
 import * as path from "path";
+import { parse as parseCsv } from "csv-parse/sync";
 
 export const GENERAL_REPORT_TYPES = [
   "content_owner_asset_ad_revenue_raw_a1",
@@ -22,6 +23,25 @@ export const PLA_REPORT_TYPES = [
 ] as const;
 
 export const ASSET_METADATA_REPORT_TYPE = "content_owner_asset_a3";
+
+export function contentIdCustomIdFileName(yearMonth: string): string {
+  return `${yearMonth}_content_id_custom_ids.csv`;
+}
+
+export function customIdInputFileName(yearMonth: string): string {
+  return `custom_id_input_required_${yearMonth}.csv`;
+}
+
+export const CUSTOM_ID_ISSUE_BLANK = "공란";
+export const CUSTOM_ID_ISSUE_NOTE = "참고";
+
+export type CustomIdWarning = {
+  filePath: string;
+  blankRows: number;
+  blankAssets: number;
+  noteRows: number;
+  noteAssets: number;
+};
 const OPTIONAL_MANAGED_REPORT_TYPES = new Set<string>([
   "content_owner_asset_ad_adjustment_revenue_raw_a1",
   "music_content_owner_asset_red_adjustment_revenue_raw_a1",
@@ -67,6 +87,7 @@ export function getMonthlyPaths(yearMonth: string) {
     shortsRawDir: path.join("reports", `shorts-usage-${yearMonth}`),
     packageDir: `reports_final_${yearMonth}_client_pla_10files`,
     geDir: `reports_final_${yearMonth}_publishing_ge`,
+    customIdDir: `reports_custom_id_${yearMonth}`,
   };
 }
 
@@ -136,17 +157,23 @@ export function checkManagedReadiness(
     { directory: paths.assetMetadataDir, reportType: ASSET_METADATA_REPORT_TYPE },
     { directory: paths.plaAssetMetadataDir, reportType: ASSET_METADATA_REPORT_TYPE },
   ].filter(({ reportType }) => !OPTIONAL_MANAGED_REPORT_TYPES.has(reportType));
-  const missing = requirements
-    .filter(({ directory, reportType }) => !findManagedReport(directory, yearMonth, reportType))
-    .map(({ directory, reportType }) => path.join(directory, `${yearMonth}_${reportType}_*.csv`));
+  const contentIdFiles = [paths.assetMetadataDir, paths.plaAssetMetadataDir]
+    .map((directory) => path.join(directory, contentIdCustomIdFileName(yearMonth)));
+  const missing = [
+    ...requirements
+      .filter(({ directory, reportType }) => !findManagedReport(directory, yearMonth, reportType))
+      .map(({ directory, reportType }) => path.join(directory, `${yearMonth}_${reportType}_*.csv`)),
+    ...contentIdFiles.filter((filePath) => !isNonEmptyFile(filePath)),
+  ];
   const partial = requirements.flatMap(({ directory, reportType }) =>
     findPartialFiles(directory, `${yearMonth}_${reportType}_`),
   );
+  const expected = requirements.length + contentIdFiles.length;
 
   return {
     ready: missing.length === 0 && partial.length === 0,
-    present: requirements.length - missing.length,
-    expected: requirements.length,
+    present: expected - missing.length,
+    expected,
     missing,
     partial,
   };
@@ -171,6 +198,23 @@ export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(
   };
 }
 
+// 추출 결과의 Custom ID 확인 목록(직접 입력할 공란, 참고 행) 건수를 요약한다.
+export function getCustomIdWarning(yearMonth: string, paths = getMonthlyPaths(yearMonth)): CustomIdWarning | null {
+  const filePath = path.join(paths.customIdDir, customIdInputFileName(yearMonth));
+  if (!isNonEmptyFile(filePath)) return null;
+
+  const records = parseCsv(fs.readFileSync(filePath, "utf-8"), { bom: true, columns: true, skip_empty_lines: true }) as Record<string, string>[];
+  const blanks = records.filter((record) => record["유형"] === CUSTOM_ID_ISSUE_BLANK);
+  const notes = records.filter((record) => record["유형"] === CUSTOM_ID_ISSUE_NOTE);
+  return {
+    filePath: path.resolve(filePath),
+    blankRows: blanks.length,
+    blankAssets: new Set(blanks.map((record) => record["Asset ID"])).size,
+    noteRows: notes.length,
+    noteAssets: new Set(notes.map((record) => record["Asset ID"])).size,
+  };
+}
+
 export function getMonthlyReadiness(yearMonth: string) {
   if (!isValidYearMonth(yearMonth)) {
     throw new Error(`Invalid yearMonth: ${yearMonth}. Use YYYYMM.`);
@@ -182,5 +226,6 @@ export function getMonthlyReadiness(yearMonth: string) {
     raw: checkRawReadiness(yearMonth, paths),
     managed: checkManagedReadiness(yearMonth, paths),
     extract: checkOutputReadiness(yearMonth, paths),
+    customIdWarning: getCustomIdWarning(yearMonth, paths),
   };
 }

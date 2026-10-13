@@ -10,7 +10,14 @@ const CREDENTIALS_PATH = path.join(process.cwd(), "credentials.json");
 const TOKEN_PATH = path.join(process.cwd(), "token.json");
 const SCOPES = [
   "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
+  // Content ID API에서 자산의 Custom ID를 조회할 때 필요하다.
+  "https://www.googleapis.com/auth/youtubepartner",
 ];
+
+function hasRequiredScopes(token: { scope?: unknown }): boolean {
+  const granted = new Set(String(token.scope ?? "").split(/\s+/).filter(Boolean));
+  return SCOPES.every((scope) => granted.has(scope));
+}
 
 async function getAuthClient(): Promise<OAuth2Client> {
   const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf-8"));
@@ -25,8 +32,11 @@ async function getAuthClient(): Promise<OAuth2Client> {
 
   if (fs.existsSync(TOKEN_PATH)) {
     const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
-    oauth2Client.setCredentials(token);
-    return oauth2Client;
+    if (hasRequiredScopes(token)) {
+      oauth2Client.setCredentials(token);
+      return oauth2Client;
+    }
+    console.log("[Auth] 저장된 토큰에 필요한 권한이 없어 다시 인증합니다.");
   }
 
   return authorizeNewToken(oauth2Client);

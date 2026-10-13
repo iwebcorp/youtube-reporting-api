@@ -10,6 +10,8 @@ import {
   SHORTS_VIDEO_FILE,
   checkManagedReadiness,
   checkRawReadiness,
+  contentIdCustomIdFileName,
+  getCustomIdWarning,
   getMonthlyPaths,
   isValidYearMonth,
 } from "./monthlyReadiness.js";
@@ -150,6 +152,33 @@ async function run(): Promise<void> {
       `--reportTypeIds=${ASSET_METADATA_REPORT_TYPE}`,
       "--latestOnly",
     ]);
+    const downloaded = checkManagedReadiness(yearMonth, paths);
+    const pendingDownloads = downloaded.missing.filter(
+      (filePath) => path.basename(filePath) !== contentIdCustomIdFileName(yearMonth),
+    );
+    if (pendingDownloads.length > 0 || downloaded.partial.length > 0) {
+      throw new Error(`[MonthlySettlement] System-managed data incomplete: ${downloaded.present}/${downloaded.expected}. Reports may not be released yet.`);
+    }
+    const extractionDirArgs = [
+      commonMonthArg,
+      `--reportDir=${paths.reportDir}`,
+      `--systemManagedDir=${paths.generalManagedDir}`,
+      `--publishingSystemManagedDir=${paths.plaManagedDir}`,
+      `--neighboringDir=${assetMetadataDir}`,
+      `--publishingDir=${plaAssetMetadataDir}`,
+    ];
+    await runTsxStep("일반 자산 Custom ID Content ID 조회", "src/resolveContentIdCustomIds.ts", [
+      ...extractionDirArgs,
+      `--contentOwnerId=${GENERAL_CONTENT_OWNER_ID}`,
+      "--category=Neighboring",
+      `--contentIdDir=${assetMetadataDir}`,
+    ]);
+    await runTsxStep("PLA 자산 Custom ID Content ID 조회", "src/resolveContentIdCustomIds.ts", [
+      ...extractionDirArgs,
+      `--contentOwnerId=${PLA_CONTENT_OWNER_ID}`,
+      "--category=Publishing",
+      `--contentIdDir=${plaAssetMetadataDir}`,
+    ]);
     const managed = checkManagedReadiness(yearMonth, paths);
     if (!managed.ready) {
       throw new Error(`[MonthlySettlement] System-managed data incomplete: ${managed.present}/${managed.expected}. Reports may not be released yet.`);
@@ -200,11 +229,29 @@ async function run(): Promise<void> {
   ]);
 
   verifyOutputs(packageDir, geDir);
+  await runTsxStep("Custom ID 확인 목록 생성", "src/checkPackageCustomIds.ts", [
+    commonMonthArg,
+    `--reportDir=${paths.reportDir}`,
+    `--neighboringDir=${assetMetadataDir}`,
+    `--publishingDir=${plaAssetMetadataDir}`,
+    `--outputDir=${packageDir}`,
+  ]);
+  const customIdWarning = getCustomIdWarning(yearMonth, paths);
   console.log("[MonthlySettlement] STAGE extract COMPLETE");
   console.log(`\n[MonthlySettlement] Completed ${yearMonth}.`);
   console.log("[MonthlySettlement] Generated 11 final output files: 10 client files + 1 GE summary.");
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);
+  if (customIdWarning && customIdWarning.blankRows > 0) {
+    console.warn(
+      `[MonthlySettlement] 경고: Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)은 API로 받을 수 없어 직접 입력이 필요합니다. 목록: ${customIdWarning.filePath}`,
+    );
+  }
+  if (customIdWarning && customIdWarning.noteRows > 0) {
+    console.warn(
+      `[MonthlySettlement] 참고: CMS에 Custom ID가 여러 개 등록된 곡 ${customIdWarning.noteAssets}개가 목록에 있습니다. 목록: ${customIdWarning.filePath}`,
+    );
+  }
 }
 
 run().catch((error) => {

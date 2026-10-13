@@ -88,6 +88,11 @@ h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
 .stage-copy strong { font-size: 15px; }
 .stage-copy span { color: #687176; font-size: 13px; }
 .notice { min-height: 22px; margin: 12px 0 0; color: #973b31; font-size: 13px; }
+.custom-id-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 12px 14px; border: 1px solid #d9b46a; border-radius: 6px; background: #fff8e8; color: #6f4b0b; font-size: 13px; }
+.custom-id-warning[hidden] { display: none; }
+.custom-id-warning p { margin: 0; line-height: 1.5; }
+.custom-id-warning .button { flex-shrink: 0; }
+@media (max-width: 640px) { .custom-id-warning { flex-direction: column; align-items: stretch; } }
 
 .log-section { margin-top: 20px; }
 .log-header { justify-content: space-between; margin-bottom: 8px; }
