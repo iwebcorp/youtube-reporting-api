@@ -9,7 +9,6 @@ import {
   PLA_REPORT_TYPES,
   SHORTS_VIDEO_FILE,
   checkManagedReadiness,
-  checkOutputReadiness,
   checkRawReadiness,
   contentIdCustomIdFileName,
   getCustomIdWarning,
@@ -20,8 +19,8 @@ import {
 
 const GENERAL_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 const PLA_CONTENT_OWNER_ID = "C9wllE5I6sRtJdunaUAdqQ";
-type SettlementStep = "raw" | "managed" | "extract" | "settle";
-const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
+type SettlementStep = "raw" | "managed" | "extract";
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
 
 async function resolveYearMonth(argv: string[]): Promise<string> {
   const option = argv.find((argument) => argument.startsWith("--yearMonth="));
@@ -61,7 +60,7 @@ function resolveSteps(argv: string[]): Set<SettlementStep> {
 
 function resolveExchangeRate(argv: string[], steps: Set<SettlementStep>): string {
   const exchangeRate = argv.find((argument) => argument.startsWith("--exchangeRate="))?.slice("--exchangeRate=".length).trim() ?? "";
-  if (steps.has("settle") && !/^\d+(\.\d+)?$/.test(exchangeRate.replace(/,/g, ""))) {
+  if (steps.has("extract") && !/^\d+(\.\d+)?$/.test(exchangeRate.replace(/,/g, ""))) {
     throw new Error("[MonthlySettlement] 정산금 계산에는 환율(원/USD)이 필요합니다. 예: --exchangeRate=1385.2");
   }
   return exchangeRate.replace(/,/g, "");
@@ -198,11 +197,7 @@ async function run(): Promise<void> {
   }
 
   if (steps.has("extract")) {
-    await runExtractStage(yearMonth, paths);
-  }
-
-  if (steps.has("settle")) {
-    await runSettleStage(yearMonth, paths, exchangeRate);
+    await runExtractStage(yearMonth, paths, exchangeRate);
   }
   console.log(`\n[MonthlySettlement] Selected stages completed for ${yearMonth}.`);
 }
@@ -231,8 +226,8 @@ function customIdCheckArgs(yearMonth: string, paths: MonthlyPaths): string[] {
   ];
 }
 
-async function runExtractStage(yearMonth: string, paths: MonthlyPaths): Promise<void> {
-  const { packageDir, geDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
+async function runExtractStage(yearMonth: string, paths: MonthlyPaths, exchangeRate: string): Promise<void> {
+  const { packageDir, geDir, settlementDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
   const raw = checkRawReadiness(yearMonth, paths);
   const managed = checkManagedReadiness(yearMonth, paths);
@@ -273,31 +268,19 @@ async function runExtractStage(yearMonth: string, paths: MonthlyPaths): Promise<
 
   verifyOutputs(packageDir, geDir);
   await runTsxStep("Custom ID 확인 목록 생성", "src/checkPackageCustomIds.ts", customIdCheckArgs(yearMonth, paths));
+  // 정산금은 Country·Asset Type·Partner Revenue로만 계산하므로 Custom ID 공란과 관계없이 바로 계산한다.
+  await runTsxStep("정산금 계산", "src/calculateSettlement.ts", [
+    commonMonthArg,
+    `--exchangeRate=${exchangeRate}`,
+    `--packageDir=${packageDir}`,
+    `--outputDir=${settlementDir}`,
+  ]);
   console.log("[MonthlySettlement] STAGE extract COMPLETE");
-  console.log("[MonthlySettlement] Generated 11 final output files: 10 client files + 1 GE summary.");
+  console.log("[MonthlySettlement] Generated 11 final output files (10 client files + 1 GE summary) and settlement amounts.");
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);
+  console.log(`[MonthlySettlement] Settlement: ${settlementDir}`);
   logCustomIdWarning(yearMonth, paths);
-}
-
-// 사용자가 Custom ID 공란을 채운 정산 파일로 정산금을 계산한다. 남은 공란은 경고만 하고 계산한다.
-async function runSettleStage(yearMonth: string, paths: MonthlyPaths, exchangeRate: string): Promise<void> {
-  const extract = checkOutputReadiness(yearMonth, paths);
-  if (!extract.ready) {
-    throw new Error(`[MonthlySettlement] 정산금 계산에는 추출된 정산 파일이 필요합니다. ${extract.present}/${extract.expected}`);
-  }
-
-  console.log("\n[MonthlySettlement] STAGE settle START");
-  await runTsxStep("Custom ID 공란 다시 확인", "src/checkPackageCustomIds.ts", customIdCheckArgs(yearMonth, paths));
-  logCustomIdWarning(yearMonth, paths);
-  await runTsxStep("정산금 계산", "src/calculateSettlement.ts", [
-    `--yearMonth=${yearMonth}`,
-    `--exchangeRate=${exchangeRate}`,
-    `--packageDir=${paths.packageDir}`,
-    `--outputDir=${paths.settlementDir}`,
-  ]);
-  console.log("[MonthlySettlement] STAGE settle COMPLETE");
-  console.log(`[MonthlySettlement] Settlement: ${paths.settlementDir}`);
 }
 
 run().catch((error) => {

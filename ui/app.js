@@ -43,7 +43,6 @@ function renderReadiness() {
   setStatus("raw", readiness.raw.ready ? `준비 완료 ${readiness.raw.present}/${readiness.raw.expected}` : `${readiness.raw.present}/${readiness.raw.expected}`, readiness.raw.ready ? "ready" : "missing");
   setStatus("managed", readiness.managed.ready ? `준비 완료 ${readiness.managed.present}/${readiness.managed.expected}` : `${readiness.managed.present}/${readiness.managed.expected}`, readiness.managed.ready ? "ready" : "missing");
   setStatus("extract", readiness.extract.ready ? `생성 완료 ${readiness.extract.present}/${readiness.extract.expected}` : "생성 필요", readiness.extract.ready ? "ready" : "waiting");
-  setStatus("settle", readiness.settle.ready ? `계산 완료 ${readiness.settle.present}/${readiness.settle.expected}` : "계산 필요", readiness.settle.ready ? "ready" : "waiting");
 
   const warning = readiness.customIdWarning;
   customIdWarning.hidden = !warning;
@@ -71,17 +70,8 @@ function renderRunState() {
 
 function enforceExtractPrerequisites() {
   const extract = stageInputs.find((input) => input.value === "extract");
-  const settle = stageInputs.find((input) => input.value === "settle");
-  if (!readiness) return;
+  if (!extract.checked || !readiness) return;
   const added = [];
-  if (settle.checked && !readiness.extract.ready && !extract.checked) {
-    extract.checked = true;
-    added.push("정산 파일 추출");
-  }
-  if (!extract.checked) {
-    notice.textContent = added.length > 0 ? `선행 단계가 자동 선택되었습니다. ${added.join(", ")}` : "";
-    return;
-  }
   for (const stage of ["raw", "managed"]) {
     if (!readiness[stage].ready) {
       const input = stageInputs.find((candidate) => candidate.value === stage);
@@ -89,7 +79,7 @@ function enforceExtractPrerequisites() {
       input.checked = true;
     }
   }
-  notice.textContent = added.length > 0 ? `선행 단계가 자동 선택되었습니다. ${added.join(", ")}` : "";
+  notice.textContent = added.length > 0 ? `추출 선행 단계가 자동 선택되었습니다. ${added.join(", ")}` : "";
 }
 
 async function refreshStatus() {
@@ -126,19 +116,19 @@ monthInput.addEventListener("change", () => {
 
 stageInputs.forEach((input) => input.addEventListener("change", () => {
   enforceExtractPrerequisites();
-  if (!input.checked && ["raw", "managed", "extract"].includes(input.value)) enforceExtractPrerequisites();
+  if (!input.checked && ["raw", "managed"].includes(input.value)) enforceExtractPrerequisites();
 }));
 
-// 환율 칸 주변 글자를 눌러도 단계 체크가 바뀌지 않게 하고, 환율을 입력하면 정산금 계산 단계를 선택한다.
+// 환율 칸 주변 글자를 눌러도 단계 체크가 바뀌지 않게 하고, 환율을 입력하면 추출 단계를 선택한다.
 rateControl.addEventListener("click", (event) => {
   if (event.target === exchangeRateInput) return;
   event.preventDefault();
   exchangeRateInput.focus();
 });
 exchangeRateInput.addEventListener("input", () => {
-  const settle = stageInputs.find((input) => input.value === "settle");
-  if (exchangeRateInput.value.trim() && !settle.checked) {
-    settle.checked = true;
+  const extract = stageInputs.find((input) => input.value === "extract");
+  if (exchangeRateInput.value.trim() && !extract.checked) {
+    extract.checked = true;
     enforceExtractPrerequisites();
   }
 });
@@ -151,7 +141,7 @@ runButton.addEventListener("click", async () => {
     return;
   }
   const exchangeRate = exchangeRateInput.value.replace(/,/g, "").trim();
-  if (steps.includes("settle") && !(/^\d+(\.\d+)?$/.test(exchangeRate) && Number(exchangeRate) > 0)) {
+  if (steps.includes("extract") && !(/^\d+(\.\d+)?$/.test(exchangeRate) && Number(exchangeRate) > 0)) {
     notice.textContent = "정산금 계산에 사용할 환율(원/USD)을 숫자로 입력해 주세요.";
     exchangeRateInput.focus();
     return;

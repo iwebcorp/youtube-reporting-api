@@ -5,7 +5,7 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { getMonthlyReadiness, isValidYearMonth } from "./monthlyReadiness.js";
 
-type SettlementStep = "raw" | "managed" | "extract" | "settle";
+type SettlementStep = "raw" | "managed" | "extract";
 type RunState = {
   running: boolean;
   yearMonth: string | null;
@@ -17,7 +17,7 @@ type RunState = {
 
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 43127;
-const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
 const UI_FILES: Record<string, { file: string; contentType: string }> = {
   "/": { file: "index.html", contentType: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
@@ -99,7 +99,7 @@ function normalizeSteps(value: unknown): SettlementStep[] {
 
 function normalizeExchangeRate(value: unknown, steps: SettlementStep[]): string {
   const exchangeRate = typeof value === "string" ? value.replace(/,/g, "").trim() : "";
-  if (!steps.includes("settle")) return "";
+  if (!steps.includes("extract")) return "";
   if (!/^\d+(\.\d+)?$/.test(exchangeRate) || Number(exchangeRate) <= 0) {
     throw new Error("정산금 계산에 사용할 환율(원/USD)을 숫자로 입력해 주세요.");
   }
@@ -107,10 +107,9 @@ function normalizeExchangeRate(value: unknown, steps: SettlementStep[]): string 
 }
 
 function resolveRunSteps(yearMonth: string, selected: SettlementStep[]): SettlementStep[] {
+  if (!selected.includes("extract")) return selected;
   const readiness = getMonthlyReadiness(yearMonth);
   const required = new Set(selected);
-  if (required.has("settle") && !readiness.extract.ready) required.add("extract");
-  if (!required.has("extract")) return ALL_STEPS.filter((step) => required.has(step));
   if (!readiness.raw.ready) required.add("raw");
   if (!readiness.managed.ready) required.add("managed");
   return ALL_STEPS.filter((step) => required.has(step));

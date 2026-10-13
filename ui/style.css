@@ -132,7 +132,7 @@ pre {
   .stage-row { align-items: flex-start; min-height: 96px; padding: 16px 0; }
   .stage-status { align-self: center; }
   .stage-copy span { max-width: 28ch; }
-  .stage-row[data-stage="settle"] { flex-wrap: wrap; }
+  .stage-row[data-stage="extract"] { flex-wrap: wrap; }
   .rate-control { margin-left: 62px; }
 }
 

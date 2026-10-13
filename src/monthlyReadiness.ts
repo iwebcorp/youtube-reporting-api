@@ -209,28 +209,11 @@ export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(
   const expectedFiles = [
     ...PACKAGE_FILES.map((fileName) => path.join(paths.packageDir, fileName)),
     path.join(paths.geDir, "publishing_ge_summary.csv"),
-  ];
-  const missing = expectedFiles.filter((filePath) => !isNonEmptyFile(filePath));
-  const partial = [
-    ...findPartialFiles(paths.packageDir, ""),
-    ...findPartialFiles(paths.geDir, ""),
-  ];
-  return {
-    ready: missing.length === 0 && partial.length === 0,
-    present: expectedFiles.length - missing.length,
-    expected: expectedFiles.length,
-    missing,
-    partial,
-  };
-}
-
-export function checkSettlementReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
-  const expectedFiles = [
     ...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)),
     path.join(paths.settlementDir, settlementSummaryFileName(yearMonth)),
   ];
   const missing = expectedFiles.filter((filePath) => !isNonEmptyFile(filePath));
-  const partial = [paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))]
+  const partial = [paths.packageDir, paths.geDir, paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))]
     .flatMap((directoryPath) => findPartialFiles(directoryPath, ""));
   return {
     ready: missing.length === 0 && partial.length === 0,
@@ -269,7 +252,6 @@ export function getMonthlyReadiness(yearMonth: string) {
     raw: checkRawReadiness(yearMonth, paths),
     managed: checkManagedReadiness(yearMonth, paths),
     extract: checkOutputReadiness(yearMonth, paths),
-    settle: checkSettlementReadiness(yearMonth, paths),
     customIdWarning: getCustomIdWarning(yearMonth, paths),
   };
 }

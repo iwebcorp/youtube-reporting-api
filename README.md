@@ -25,10 +25,10 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 1. `update-and-start.cmd`를 더블 클릭합니다.
 2. 정산 대상 월만 선택합니다.
-3. `일별 Raw Data`, `System-managed Data`, `정산 파일 추출` 순서로 실행합니다.
-4. Custom ID 공란을 채운 뒤 환율(원/USD)을 입력하고 `정산금 계산`을 실행합니다.
-4. 앞 단계가 준비되지 않으면 정산 파일 추출은 실행되지 않습니다.
-5. 각 단계가 완료될 때까지 창을 닫거나 PC를 절전 상태로 전환하지 않습니다.
+3. `정산 파일 추출 · 정산금 계산` 단계에 환율(원/USD)을 입력합니다.
+4. `일별 Raw Data`, `System-managed Data`, `정산 파일 추출 · 정산금 계산` 순서로 실행합니다.
+5. 앞 단계가 준비되지 않으면 정산 파일 추출은 실행되지 않습니다.
+6. 각 단계가 완료될 때까지 창을 닫거나 PC를 절전 상태로 전환하지 않습니다.
 
 소스 업데이트가 필요 없는 경우에는 `start-gui.cmd`로 바로 실행할 수 있습니다. 브라우저가 자동으로 열리지 않으면 터미널에 표시된 로컬 주소를 Chrome 또는 Edge에서 엽니다.
 
@@ -63,7 +63,7 @@ GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생
 
 ## 정산금 계산
 
-`정산 파일 추출`이 끝나면 `reports_final_YYYYMM_client_pla_10files` 폴더의 CSV를 Excel로 열어 Custom ID 공란을 채우고 저장합니다. CSV 또는 CSV UTF-8 어느 형식으로 저장해도 됩니다. 이어서 실행 화면 4단계에 환율(원/USD)을 입력하고 `정산금 계산`을 실행합니다. 공란이 남아 있으면 경고만 표시하고 계산은 진행합니다.
+정산금은 정산 파일 추출 직후 같은 단계에서 입력한 환율로 계산합니다. 계산에는 Country, Asset Type, Partner Revenue만 쓰므로 Custom ID 공란이 있어도 금액은 달라지지 않습니다. 공란은 추출된 파일을 열어 직접 입력합니다.
 
 결과는 `reports_settlement_YYYYMM` 폴더에 원본 행마다 계산 열을 붙인 CSV로 생성됩니다. 금액은 반올림하지 않습니다.
 
