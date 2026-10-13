@@ -169,6 +169,10 @@ export class AssetMetadataRepository {
     category: AssetCategory | undefined,
     profile: MetadataProfile,
   ): void {
+    // PLA 메타데이터의 음원(sr_asset_id)은 곡이 들어간 일반 CMS 음원이므로 이미 확인된 분류를 덮지 않는다.
+    const existingCategory = this.metadataMap.get(assetId)?.sourceCategory;
+    if (profile === "publishingRecording" && existingCategory) category = existingCategory;
+
     if (category === "Neighboring") this.neighboringAssets.add(assetId);
     if (category === "Publishing") this.publishingAssets.add(assetId);
 

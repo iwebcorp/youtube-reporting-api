@@ -25,6 +25,7 @@ config.json
 reports/
 reports_final_*/
 reports_custom_id_*/
+reports_settlement_*/
 *.csv
 *.txt
 *.xlsx

@@ -1,8 +1,6 @@
 // 전달용 정산 파일에서 Custom ID가 빈 행과 CMS에 Custom ID가 여러 개인 곡의 행을 찾아 위치를 CSV로 남긴다.
 import * as fs from "fs";
 import * as path from "path";
-import { parse } from "csv-parse";
-import iconv from "iconv-lite";
 import { AssetClassifier } from "./assetClassifier.js";
 import {
   CUSTOM_ID_ISSUE_BLANK,
@@ -11,6 +9,7 @@ import {
   customIdInputFileName,
   getMonthlyPaths,
 } from "./monthlyReadiness.js";
+import { readCsvRecords } from "./reporting/csvFile.js";
 import { clean, csvEscape, ensureDirectory, parseCliArgs, resolveExtractionConfig } from "./reporting/utils.js";
 
 const HEADER_SEARCH_ROWS = 2;
@@ -41,18 +40,11 @@ function toColumnLetter(index: number): string {
 
 async function findCustomIdIssueRows(filePath: string, classifier: AssetClassifier): Promise<CustomIdIssueRow[]> {
   const fileName = path.basename(filePath);
-  const records = fs
-    .createReadStream(filePath)
-    .pipe(iconv.decodeStream("cp949"))
-    .pipe(parse({ bom: true, relax_column_count: true, skip_empty_lines: true, info: true })) as AsyncIterable<{
-      record: string[];
-      info: { lines: number };
-    }>;
-
   const issues: CustomIdIssueRow[] = [];
   let recordIndex = 0;
   let columns: { customId: number; assetId: number; assetTitle: number; country: number } | undefined;
-  for await (const { record: values, info } of records) {
+  // 사용자가 Excel로 Custom ID를 입력해 UTF-8로 저장했을 수도 있어 인코딩을 판별해 읽는다.
+  for await (const { record: values, line } of readCsvRecords(filePath)) {
     recordIndex += 1;
     if (!columns) {
       const customId = values.indexOf(CUSTOM_ID_HEADER);
@@ -76,8 +68,7 @@ async function findCustomIdIssueRows(filePath: string, classifier: AssetClassifi
     issues.push({
       kind: currentValue ? CUSTOM_ID_ISSUE_NOTE : CUSTOM_ID_ISSUE_BLANK,
       fileName,
-      // csv-parse의 lines는 레코드가 끝난 줄 번호라 Excel 행 번호와 같다.
-      lineNumber: info.lines,
+      lineNumber: line,
       columnLetter: toColumnLetter(columns.customId),
       assetId,
       assetTitle: clean(values[columns.assetTitle]),

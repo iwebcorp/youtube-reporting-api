@@ -23,6 +23,7 @@ export const PLA_REPORT_TYPES = [
 ] as const;
 
 export const ASSET_METADATA_REPORT_TYPE = "content_owner_asset_a3";
+export const SHORTS_VIDEO_FILE = "6_shorts_video_usage_detail.csv";
 
 export function contentIdCustomIdFileName(yearMonth: string): string {
   return `${yearMonth}_content_id_custom_ids.csv`;
@@ -31,6 +32,31 @@ export function contentIdCustomIdFileName(yearMonth: string): string {
 export function customIdInputFileName(yearMonth: string): string {
   return `custom_id_input_required_${yearMonth}.csv`;
 }
+
+export function settlementSummaryFileName(yearMonth: string): string {
+  return `정산금_요약_${yearMonth}.csv`;
+}
+
+export const SETTLEMENT_NEIGHBORING_FOLDER = "인접";
+export const SETTLEMENT_PUBLISHING_FOLDER = "저작";
+export const SETTLEMENT_PERFORMANCE_FOLDER = "실연권료";
+// 저작 오디오서비스는 API로 제공되지 않아 계산 대상에서 뺀다(Publishing 4 제외와 같은 기준).
+export const SETTLEMENT_FILES = [
+  ...[
+    "1_neighboring_daily_ad.csv",
+    "2_neighboring_daily_ad_adj.csv",
+    "3_neighboring_monthly_sub.csv",
+    "4_neighboring_financial_detail.csv",
+    "5_publishing_shorts_revenue_summary.csv",
+    SHORTS_VIDEO_FILE,
+  ].map((fileName) => path.join(SETTLEMENT_NEIGHBORING_FOLDER, fileName)),
+  ...["1_publishing_daily_ad.csv", "2_publishing_daily_ad_adj.csv", "3_publishing_monthly_sub.csv"]
+    .map((fileName) => path.join(SETTLEMENT_PUBLISHING_FOLDER, fileName)),
+  ...["1_neighboring_daily_ad.csv", "3_neighboring_monthly_sub.csv"]
+    .map((fileName) => path.join(SETTLEMENT_PERFORMANCE_FOLDER, fileName)),
+];
+
+const SETTLEMENT_FOLDERS = [SETTLEMENT_NEIGHBORING_FOLDER, SETTLEMENT_PUBLISHING_FOLDER, SETTLEMENT_PERFORMANCE_FOLDER];
 
 export const CUSTOM_ID_ISSUE_BLANK = "공란";
 export const CUSTOM_ID_ISSUE_NOTE = "참고";
@@ -47,7 +73,6 @@ const OPTIONAL_MANAGED_REPORT_TYPES = new Set<string>([
   "music_content_owner_asset_red_adjustment_revenue_raw_a1",
   "publisher_content_owner_asset_red_adjustment_revenue_raw_a1",
 ]);
-export const SHORTS_VIDEO_FILE = "6_shorts_video_usage_detail.csv";
 export const PACKAGE_FILES = [
   "1_neighboring_daily_ad.csv",
   "1_publishing_daily_ad.csv",
@@ -88,6 +113,7 @@ export function getMonthlyPaths(yearMonth: string) {
     packageDir: `reports_final_${yearMonth}_client_pla_10files`,
     geDir: `reports_final_${yearMonth}_publishing_ge`,
     customIdDir: `reports_custom_id_${yearMonth}`,
+    settlementDir: `reports_settlement_${yearMonth}`,
   };
 }
 
@@ -198,6 +224,23 @@ export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(
   };
 }
 
+export function checkSettlementReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
+  const expectedFiles = [
+    ...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)),
+    path.join(paths.settlementDir, settlementSummaryFileName(yearMonth)),
+  ];
+  const missing = expectedFiles.filter((filePath) => !isNonEmptyFile(filePath));
+  const partial = [paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))]
+    .flatMap((directoryPath) => findPartialFiles(directoryPath, ""));
+  return {
+    ready: missing.length === 0 && partial.length === 0,
+    present: expectedFiles.length - missing.length,
+    expected: expectedFiles.length,
+    missing,
+    partial,
+  };
+}
+
 // 추출 결과의 Custom ID 확인 목록(직접 입력할 공란, 참고 행) 건수를 요약한다.
 export function getCustomIdWarning(yearMonth: string, paths = getMonthlyPaths(yearMonth)): CustomIdWarning | null {
   const filePath = path.join(paths.customIdDir, customIdInputFileName(yearMonth));
@@ -226,6 +269,7 @@ export function getMonthlyReadiness(yearMonth: string) {
     raw: checkRawReadiness(yearMonth, paths),
     managed: checkManagedReadiness(yearMonth, paths),
     extract: checkOutputReadiness(yearMonth, paths),
+    settle: checkSettlementReadiness(yearMonth, paths),
     customIdWarning: getCustomIdWarning(yearMonth, paths),
   };
 }

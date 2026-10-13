@@ -26,6 +26,7 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 1. `update-and-start.cmd`를 더블 클릭합니다.
 2. 정산 대상 월만 선택합니다.
 3. `일별 Raw Data`, `System-managed Data`, `정산 파일 추출` 순서로 실행합니다.
+4. Custom ID 공란을 채운 뒤 환율(원/USD)을 입력하고 `정산금 계산`을 실행합니다.
 4. 앞 단계가 준비되지 않으면 정산 파일 추출은 실행되지 않습니다.
 5. 각 단계가 완료될 때까지 창을 닫거나 PC를 절전 상태로 전환하지 않습니다.
 
@@ -60,11 +61,25 @@ GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생
 
 `Publishing 4`는 YouTube가 Hardware Audio Tier DSR 상세 보고서를 Reporting API로 제공하지 않아 생성 대상에서 제외되어 있습니다. Shorts 상세 파일은 `Engaged Views`와 Video ID를 포함한 사용 내역이며, 곡별 확정 수익 보고서 자체는 아닙니다.
 
+## 정산금 계산
+
+`정산 파일 추출`이 끝나면 `reports_final_YYYYMM_client_pla_10files` 폴더의 CSV를 Excel로 열어 Custom ID 공란을 채우고 저장합니다. CSV 또는 CSV UTF-8 어느 형식으로 저장해도 됩니다. 이어서 실행 화면 4단계에 환율(원/USD)을 입력하고 `정산금 계산`을 실행합니다. 공란이 남아 있으면 경고만 표시하고 계산은 진행합니다.
+
+결과는 `reports_settlement_YYYYMM` 폴더에 원본 행마다 계산 열을 붙인 CSV로 생성됩니다. 금액은 반올림하지 않습니다.
+
+- `인접` 폴더: 1~4번 파일은 Country가 US인 행만 Partner Revenue에서 원천세 10%를 뺍니다. 1·3번은 Asset Type이 Art Track·Sound Recording인 행에서 실연권료 11.47%를 추가로 뺍니다. Shorts는 5번 파일의 국가별 Shorts 수익(US만 원천세 10% 공제)을 수익이 있는 국가의 6번 파일 Engaged Views 점유율대로 나눕니다.
+- `저작` 폴더: 1~3번 파일의 Partner Revenue에 환율을 곱합니다.
+- `실연권료` 폴더: 1·3번 파일의 Art Track·Sound Recording 행만 모아 원천세 공제 후 금액의 11.47%를 계산합니다.
+- `정산금_요약_YYYYMM.csv`: 파일별 행 수, 원본 합계, 원천세 공제 후 합계, 결과 합계입니다.
+
+저작 오디오서비스는 `Publishing 4`와 같은 이유로 API로 제공되지 않아 계산 대상에서 제외합니다.
+
 ## 데이터 보관
 
 - `reports` 폴더에는 API에서 내려받은 원천 데이터가 저장됩니다.
 - `reports_final_YYYYMM_client_pla_10files` 폴더에는 광수미디어 전달용 10개 파일이 저장됩니다.
 - `reports_final_YYYYMM_publishing_ge` 폴더에는 GE 총액 요약이 저장됩니다.
+- `reports_settlement_YYYYMM` 폴더에는 정산금 계산 결과가 저장됩니다.
 - 다음 달 추출이 끝났다고 이전 달 원천 데이터와 산출물을 바로 삭제하지 마십시오.
 
 ## 오류가 발생한 경우
