@@ -55,7 +55,8 @@ function renderReadiness() {
   if (!readiness.extract.ready) setStatus("customId", "추출 필요", "waiting");
   else if (blankRows > 0) setStatus("customId", `공란 ${blankRows}행 · 자산 ${warning.blankAssets}개`, "missing");
   else setStatus("customId", "입력 완료", "ready");
-  setStatus("settle", readiness.settle.ready ? `생성 완료 ${readiness.settle.present}/${readiness.settle.expected}` : "생성 필요", readiness.settle.ready ? "ready" : "waiting");
+  if (readiness.settle.stale) setStatus("settle", "다시 계산 필요", "missing");
+  else setStatus("settle", readiness.settle.ready ? `생성 완료 ${readiness.settle.present}/${readiness.settle.expected}` : "생성 필요", readiness.settle.ready ? "ready" : "waiting");
   renderCustomIdButton();
 
   customIdWarning.hidden = !warning;

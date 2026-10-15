@@ -92,6 +92,8 @@ export type ReadinessResult = {
   expected: number;
   missing: string[];
   partial: string[];
+  // 정산금 결과가 3단계 정산 파일보다 오래되어 다시 계산해야 할 때 true
+  stale?: boolean;
 };
 
 export type MonthlyPaths = ReturnType<typeof getMonthlyPaths>;
@@ -228,15 +230,26 @@ export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(
   );
 }
 
-// 5단계: 인접·저작·실연권료 정산금 파일과 요약
+function modifiedAt(filePath: string): number {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+// 5단계: 인접·저작·실연권료 정산금 파일과 요약.
+// 3단계를 다시 실행했거나 전달 파일을 고쳐 정산 파일이 요약보다 새로우면 다시 계산이 필요하다.
 export function checkSettlementReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
-  return checkFiles(
-    [
-      ...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)),
-      path.join(paths.settlementDir, settlementSummaryFileName(yearMonth)),
-    ],
+  const summaryPath = path.join(paths.settlementDir, settlementSummaryFileName(yearMonth));
+  const result = checkFiles(
+    [...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)), summaryPath],
     [paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))],
   );
+  if (!result.ready) return result;
+  const packageModifiedAt = Math.max(...PACKAGE_FILES.map((fileName) => modifiedAt(path.join(paths.packageDir, fileName))));
+  const stale = packageModifiedAt > modifiedAt(summaryPath);
+  return { ...result, ready: !stale, stale };
 }
 
 // 추출 결과의 Custom ID 확인 목록(직접 입력할 공란, 참고 행) 건수를 요약한다.

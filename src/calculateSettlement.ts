@@ -56,6 +56,8 @@ interface SummaryRow {
   afterWithholding: Decimal | null;
   result: Decimal;
   note: string;
+  // 다른 줄에 이미 포함된 금액이라 구분별 총액에서 뺀다.
+  excludedFromTotal?: boolean;
 }
 
 type CellReader = (column: string) => string;
@@ -212,7 +214,8 @@ async function calculateShorts(packageDir: string, outputDir: string, exchangeRa
     source: ZERO,
     afterWithholding: ZERO,
     result: ZERO,
-    note: "US 원천세 10% 공제",
+    note: "US 원천세 10% 공제. 6번 파일로 곡별 분배되므로 인접 총액에서 제외",
+    excludedFromTotal: true,
   };
   revenueSummary.rows = await transformCsv({
     sourcePath: path.join(packageDir, revenueFileName),
@@ -256,7 +259,7 @@ async function calculateShorts(packageDir: string, outputDir: string, exchangeRa
     section: "인접",
     fileName: SHORTS_VIDEO_FILE,
     rows: 0,
-    source: totalRevenue,
+    source: revenueSummary.source,
     afterWithholding: totalRevenue,
     result: ZERO,
     note: `5번 파일 원천세 공제 후 합계를 Engaged Views 점유율(전체 ${formatDecimal(totalViews)})로 분배`,
@@ -338,6 +341,28 @@ async function writeSummary(filePath: string, exchangeRate: Decimal, rows: Summa
       formatDecimal(row.result),
       won(row.result),
       row.note,
+    ]);
+  }
+
+  // 구분별 총액. 5번 Shorts 요약은 6번에 분배된 금액이라 인접 총액에 넣지 않는다.
+  for (const section of [...new Set(rows.map((row) => row.section))]) {
+    const included = rows.filter((row) => row.section === section && !row.excludedFromTotal);
+    const sum = (pick: (row: SummaryRow) => Decimal | null) => included.reduce((total, row) => add(total, pick(row) ?? ZERO), ZERO);
+    const hasWithholding = included.some((row) => row.afterWithholding);
+    const source = sum((row) => row.source);
+    const net = sum((row) => row.afterWithholding);
+    const result = sum((row) => row.result);
+    await writer.write([
+      `${section} 총액`,
+      included.map((row) => row.fileName.split("_")[0]).join("+") + "번 파일",
+      String(included.reduce((total, row) => total + row.rows, 0)),
+      formatDecimal(source),
+      won(source),
+      hasWithholding ? formatDecimal(net) : "",
+      hasWithholding ? won(net) : "",
+      formatDecimal(result),
+      won(result),
+      section === "인접" ? "5번 Shorts 요약 제외(6번에 분배된 금액과 같음)" : "",
     ]);
   }
   await writer.close();
