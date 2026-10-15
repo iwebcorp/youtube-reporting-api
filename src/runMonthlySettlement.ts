@@ -1,4 +1,4 @@
-// 대상 월 하나로 API 다운로드부터 최종 산출물 11개와 정산금 계산까지 실행하는 월별 실행기
+// 대상 월 하나로 API 다운로드부터 최종 산출물 11개 추출, 정산금 계산까지 실행하는 월별 실행기
 import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
@@ -9,6 +9,7 @@ import {
   PLA_REPORT_TYPES,
   SHORTS_VIDEO_FILE,
   checkManagedReadiness,
+  checkOutputReadiness,
   checkRawReadiness,
   contentIdCustomIdFileName,
   getCustomIdWarning,
@@ -19,8 +20,9 @@ import {
 
 const GENERAL_CONTENT_OWNER_ID = "2jFu0i9K0PE3MDrkU_UUfQ";
 const PLA_CONTENT_OWNER_ID = "C9wllE5I6sRtJdunaUAdqQ";
-type SettlementStep = "raw" | "managed" | "extract";
-const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
+// 4단계 Custom ID 입력은 GUI 모달에서 하므로 실행 단계에 없다.
+type SettlementStep = "raw" | "managed" | "extract" | "settle";
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
 
 async function resolveYearMonth(argv: string[]): Promise<string> {
   const option = argv.find((argument) => argument.startsWith("--yearMonth="));
@@ -60,7 +62,7 @@ function resolveSteps(argv: string[]): Set<SettlementStep> {
 
 function resolveExchangeRate(argv: string[], steps: Set<SettlementStep>): string {
   const exchangeRate = argv.find((argument) => argument.startsWith("--exchangeRate="))?.slice("--exchangeRate=".length).trim() ?? "";
-  if (steps.has("extract") && !/^\d+(\.\d+)?$/.test(exchangeRate.replace(/,/g, ""))) {
+  if (steps.has("settle") && !/^\d+(\.\d+)?$/.test(exchangeRate.replace(/,/g, ""))) {
     throw new Error("[MonthlySettlement] 정산금 계산에는 환율(원/USD)이 필요합니다. 예: --exchangeRate=1385.2");
   }
   return exchangeRate.replace(/,/g, "");
@@ -197,7 +199,10 @@ async function run(): Promise<void> {
   }
 
   if (steps.has("extract")) {
-    await runExtractStage(yearMonth, paths, exchangeRate);
+    await runExtractStage(yearMonth, paths);
+  }
+  if (steps.has("settle")) {
+    await runSettleStage(yearMonth, paths, exchangeRate);
   }
   console.log(`\n[MonthlySettlement] Selected stages completed for ${yearMonth}.`);
 }
@@ -206,7 +211,7 @@ function logCustomIdWarning(yearMonth: string, paths: MonthlyPaths): void {
   const customIdWarning = getCustomIdWarning(yearMonth, paths);
   if (customIdWarning && customIdWarning.blankRows > 0) {
     console.warn(
-      `[MonthlySettlement] 경고: Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)은 API로 받을 수 없어 직접 입력이 필요합니다. 목록: ${customIdWarning.filePath}`,
+      `[MonthlySettlement] 경고: Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)은 API로 받을 수 없어 4단계 Custom ID 입력이 필요합니다. 목록: ${customIdWarning.filePath}`,
     );
   }
   if (customIdWarning && customIdWarning.noteRows > 0) {
@@ -226,8 +231,8 @@ function customIdCheckArgs(yearMonth: string, paths: MonthlyPaths): string[] {
   ];
 }
 
-async function runExtractStage(yearMonth: string, paths: MonthlyPaths, exchangeRate: string): Promise<void> {
-  const { packageDir, geDir, settlementDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
+async function runExtractStage(yearMonth: string, paths: MonthlyPaths): Promise<void> {
+  const { packageDir, geDir, assetMetadataDir, plaAssetMetadataDir, shortsRawDir } = paths;
   const commonMonthArg = `--yearMonth=${yearMonth}`;
   const raw = checkRawReadiness(yearMonth, paths);
   const managed = checkManagedReadiness(yearMonth, paths);
@@ -267,20 +272,38 @@ async function runExtractStage(yearMonth: string, paths: MonthlyPaths, exchangeR
   ]);
 
   verifyOutputs(packageDir, geDir);
+  // 합계 검증 뒤에 지운다. 0인 행이라 합계는 달라지지 않고, Custom ID 확인 목록의 행 번호는 삭제 후 파일 기준이 된다.
+  await runTsxStep("금액 0인 행 삭제", "src/removeZeroRows.ts", [`--packageDir=${packageDir}`]);
   await runTsxStep("Custom ID 확인 목록 생성", "src/checkPackageCustomIds.ts", customIdCheckArgs(yearMonth, paths));
-  // 정산금은 Country·Asset Type·Partner Revenue로만 계산하므로 Custom ID 공란과 관계없이 바로 계산한다.
-  await runTsxStep("정산금 계산", "src/calculateSettlement.ts", [
-    commonMonthArg,
-    `--exchangeRate=${exchangeRate}`,
-    `--packageDir=${packageDir}`,
-    `--outputDir=${settlementDir}`,
-  ]);
   console.log("[MonthlySettlement] STAGE extract COMPLETE");
-  console.log("[MonthlySettlement] Generated 11 final output files (10 client files + 1 GE summary) and settlement amounts.");
+  console.log("[MonthlySettlement] Generated 11 final output files (10 client files + 1 GE summary).");
   console.log(`[MonthlySettlement] Package: ${packageDir}`);
   console.log(`[MonthlySettlement] GE summary: ${geDir}`);
-  console.log(`[MonthlySettlement] Settlement: ${settlementDir}`);
   logCustomIdWarning(yearMonth, paths);
+}
+
+// 4단계에서 Custom ID 공란을 모두 채운 뒤 환율로 정산금을 계산한다.
+async function runSettleStage(yearMonth: string, paths: MonthlyPaths, exchangeRate: string): Promise<void> {
+  const output = checkOutputReadiness(yearMonth, paths);
+  if (!output.ready) {
+    throw new Error(`[MonthlySettlement] 정산금 계산에는 3단계 정산 파일이 필요합니다. ${output.present}/${output.expected}.`);
+  }
+  const customIdWarning = getCustomIdWarning(yearMonth, paths);
+  if (customIdWarning && customIdWarning.blankRows > 0) {
+    throw new Error(
+      `[MonthlySettlement] Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)이 남아 있습니다. 4단계 Custom ID 입력을 마친 뒤 5단계를 실행해 주세요.`,
+    );
+  }
+
+  console.log("\n[MonthlySettlement] STAGE settle START");
+  await runTsxStep("정산금 계산", "src/calculateSettlement.ts", [
+    `--yearMonth=${yearMonth}`,
+    `--exchangeRate=${exchangeRate}`,
+    `--packageDir=${paths.packageDir}`,
+    `--outputDir=${paths.settlementDir}`,
+  ]);
+  console.log("[MonthlySettlement] STAGE settle COMPLETE");
+  console.log(`[MonthlySettlement] Settlement: ${paths.settlementDir}`);
 }
 
 run().catch((error) => {

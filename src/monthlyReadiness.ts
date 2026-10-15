@@ -205,16 +205,9 @@ export function checkManagedReadiness(
   };
 }
 
-export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
-  const expectedFiles = [
-    ...PACKAGE_FILES.map((fileName) => path.join(paths.packageDir, fileName)),
-    path.join(paths.geDir, "publishing_ge_summary.csv"),
-    ...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)),
-    path.join(paths.settlementDir, settlementSummaryFileName(yearMonth)),
-  ];
+function checkFiles(expectedFiles: string[], directories: string[]): ReadinessResult {
   const missing = expectedFiles.filter((filePath) => !isNonEmptyFile(filePath));
-  const partial = [paths.packageDir, paths.geDir, paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))]
-    .flatMap((directoryPath) => findPartialFiles(directoryPath, ""));
+  const partial = directories.flatMap((directoryPath) => findPartialFiles(directoryPath, ""));
   return {
     ready: missing.length === 0 && partial.length === 0,
     present: expectedFiles.length - missing.length,
@@ -222,6 +215,28 @@ export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(
     missing,
     partial,
   };
+}
+
+// 3단계: 전달용 정산 파일 10개와 GE 요약 1개
+export function checkOutputReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
+  return checkFiles(
+    [
+      ...PACKAGE_FILES.map((fileName) => path.join(paths.packageDir, fileName)),
+      path.join(paths.geDir, "publishing_ge_summary.csv"),
+    ],
+    [paths.packageDir, paths.geDir],
+  );
+}
+
+// 5단계: 인접·저작·실연권료 정산금 파일과 요약
+export function checkSettlementReadiness(yearMonth: string, paths = getMonthlyPaths(yearMonth)): ReadinessResult {
+  return checkFiles(
+    [
+      ...SETTLEMENT_FILES.map((fileName) => path.join(paths.settlementDir, fileName)),
+      path.join(paths.settlementDir, settlementSummaryFileName(yearMonth)),
+    ],
+    [paths.settlementDir, ...SETTLEMENT_FOLDERS.map((folder) => path.join(paths.settlementDir, folder))],
+  );
 }
 
 // 추출 결과의 Custom ID 확인 목록(직접 입력할 공란, 참고 행) 건수를 요약한다.
@@ -253,5 +268,6 @@ export function getMonthlyReadiness(yearMonth: string) {
     managed: checkManagedReadiness(yearMonth, paths),
     extract: checkOutputReadiness(yearMonth, paths),
     customIdWarning: getCustomIdWarning(yearMonth, paths),
+    settle: checkSettlementReadiness(yearMonth, paths),
   };
 }

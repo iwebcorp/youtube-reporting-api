@@ -53,8 +53,27 @@
           <input type="checkbox" value="extract" />
           <span class="stage-index">03</span>
           <span class="stage-copy">
-            <strong>정산 파일 추출 · 정산금 계산</strong>
-            <span>전달 파일 10개 + GE 요약 1개 · 인접·저작·실연권료 정산금</span>
+            <strong>정산 파일 추출</strong>
+            <span>전달 파일 10개 + GE 요약 1개 · 금액 0인 행 삭제</span>
+          </span>
+          <span class="stage-status loading">확인 중</span>
+        </label>
+        <div class="stage-row manual" data-stage="customId">
+          <span class="stage-check" aria-hidden="true"></span>
+          <span class="stage-index">04</span>
+          <span class="stage-copy">
+            <strong>Custom ID 입력</strong>
+            <span>공란인 Custom ID를 Asset ID별로 입력해 전달 파일에 반영</span>
+          </span>
+          <button id="customIdButton" class="button secondary" type="button" disabled>Custom ID 입력</button>
+          <span class="stage-status loading">확인 중</span>
+        </div>
+        <label class="stage-row" data-stage="settle">
+          <input type="checkbox" value="settle" />
+          <span class="stage-index">05</span>
+          <span class="stage-copy">
+            <strong>정산금 계산</strong>
+            <span>인접·저작·실연권료 정산금 · 원천세 공제 결과 USD·원</span>
           </span>
           <span id="rateControl" class="rate-control">
             <span>환율 (원/USD)</span>
@@ -70,6 +89,28 @@
       </div>
 
       <p id="notice" class="notice" role="status"></p>
+
+      <dialog id="customIdDialog" class="custom-id-dialog" aria-labelledby="custom-id-heading">
+        <form id="customIdForm" method="dialog">
+          <header class="dialog-header">
+            <h2 id="custom-id-heading">Custom ID 입력</h2>
+            <p>YouTube CMS에 Custom ID가 없어 API로 받지 못한 자산입니다. 입력한 값은 전달 파일의 공란에 바로 저장됩니다. 비워 둔 자산은 저장하지 않습니다.</p>
+          </header>
+          <div class="dialog-body">
+            <table class="custom-id-table">
+              <thead>
+                <tr><th scope="col">Asset ID</th><th scope="col">Asset Title</th><th scope="col">공란 위치</th><th scope="col">Custom ID</th></tr>
+              </thead>
+              <tbody id="customIdRows"></tbody>
+            </table>
+          </div>
+          <p id="customIdDialogNotice" class="notice" role="status"></p>
+          <footer class="dialog-actions">
+            <button id="customIdCancel" class="button secondary" type="button">닫기</button>
+            <button id="customIdSave" class="button primary" type="submit">저장</button>
+          </footer>
+        </form>
+      </dialog>
 
       <section class="log-section" aria-labelledby="log-heading">
         <div class="log-header">

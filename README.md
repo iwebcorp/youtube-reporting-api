@@ -25,10 +25,11 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 1. `update-and-start.cmd`를 더블 클릭합니다.
 2. 정산 대상 월만 선택합니다.
-3. `정산 파일 추출 · 정산금 계산` 단계에 환율(원/USD)을 입력합니다.
-4. `일별 Raw Data`, `System-managed Data`, `정산 파일 추출 · 정산금 계산` 순서로 실행합니다.
-5. 앞 단계가 준비되지 않으면 정산 파일 추출은 실행되지 않습니다.
-6. 각 단계가 완료될 때까지 창을 닫거나 PC를 절전 상태로 전환하지 않습니다.
+3. `일별 Raw Data`, `System-managed Data`, `정산 파일 추출` 순서로 실행합니다.
+4. 4단계 `Custom ID 입력`에 공란이 표시되면 버튼을 눌러 Asset ID별로 Custom ID를 입력하고 저장합니다.
+5. 5단계 `정산금 계산`에 환율(원/USD)을 입력하고 실행합니다. Custom ID 공란이 남아 있으면 실행되지 않습니다.
+6. 앞 단계가 준비되지 않으면 정산 파일 추출과 정산금 계산은 실행되지 않습니다.
+7. 각 단계가 완료될 때까지 창을 닫거나 PC를 절전 상태로 전환하지 않습니다.
 
 소스 업데이트가 필요 없는 경우에는 `start-gui.cmd`로 바로 실행할 수 있습니다. 브라우저가 자동으로 열리지 않으면 터미널에 표시된 로컬 주소를 Chrome 또는 Edge에서 엽니다.
 
@@ -36,13 +37,13 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 정산 파일은 이 단계에서 받은 해당 월 API 원본만 사용합니다. 과거 월 캐시, CMS에서 수동으로 받은 파일, 기존 산출물을 대체 자료로 사용하지 않습니다.
 
-Custom ID는 정산 원본, 월말 자산 메타데이터, Content ID API 조회 결과 순서로 채웁니다. 그래도 Custom ID가 빈 행은 YouTube CMS에 값이 등록되지 않아 API로 받을 수 없는 경우입니다. 추출은 그대로 완료하고, `reports_custom_id_YYYYMM/custom_id_input_required_YYYYMM.csv`에 파일명, 행 번호, 열 위치, Asset ID를 `공란` 유형으로 남깁니다. 실행 화면에도 경고와 `Custom ID 확인 목록 열기` 버튼이 표시되므로, 목록의 위치에 Custom ID를 직접 입력합니다.
+Custom ID는 정산 원본, 월말 자산 메타데이터, Content ID API 조회 결과 순서로 채웁니다. 그래도 Custom ID가 빈 행은 YouTube CMS에 값이 등록되지 않아 API로 받을 수 없는 경우입니다. 추출은 그대로 완료하고, `reports_custom_id_YYYYMM/custom_id_input_required_YYYYMM.csv`에 파일명, 행 번호, 열 위치, Asset ID를 `공란` 유형으로 남깁니다. 4단계 `Custom ID 입력` 창에 공란 자산이 Asset ID별로 표시되며, 입력한 값은 전달용 정산 파일 10개의 해당 공란에 바로 저장되고 목록에서 빠집니다. 비워 둔 자산은 다음에 다시 입력할 수 있습니다.
 
 저작권 곡 중 CMS에 Custom ID가 여러 개 등록된 곡은 메타데이터로 값을 추정하지 않습니다. 정산 보고서나 Content ID API가 준 값을 그대로 쓰고, 같은 목록에 `참고` 유형으로 현재 값과 CMS 등록 값을 함께 남깁니다. `참고` 행은 입력할 필요가 없으며 CMS 정리 여부를 확인하는 용도입니다. CMS에 Custom ID를 등록한 뒤 `System-managed Data`와 `정산 파일 추출`을 다시 실행해도 됩니다.
 
 ## 생성 결과
 
-정산 대상이 `202607`이면 전달용 폴더는 `reports_final_202607_client_pla_10files`로 생성됩니다.
+정산 대상이 `202607`이면 전달용 폴더는 `reports_final_202607_client_pla_10files`로 생성됩니다. 금액이 정확히 0인 행은 삭제합니다(1~4번 인접·1~3번 저작은 Partner Revenue, 5번 Shorts 요약은 Shorts Flat Fee Revenue USD, 6번 Shorts 상세는 Engaged Views 기준). 0.0001처럼 작은 값은 남기며, 5번 인접 지급 요약은 대상이 아닙니다.
 
 1. `1_neighboring_daily_ad.csv`.
 2. `2_neighboring_daily_ad_adj.csv`.
@@ -63,14 +64,14 @@ GE 총액 요약은 `reports_final_202607_publishing_ge` 폴더에 별도로 생
 
 ## 정산금 계산
 
-정산금은 정산 파일 추출 직후 같은 단계에서 입력한 환율로 계산합니다. 계산에는 Country, Asset Type, Partner Revenue만 쓰므로 Custom ID 공란이 있어도 금액은 달라지지 않습니다. 공란은 추출된 파일을 열어 직접 입력합니다.
+정산금은 4단계에서 Custom ID 공란을 모두 채운 뒤 5단계에서 입력한 환율로 계산합니다.
 
-결과는 `reports_settlement_YYYYMM` 폴더에 원본 행마다 계산 열을 붙인 CSV로 생성됩니다. 금액은 반올림하지 않습니다.
+결과는 `reports_settlement_YYYYMM` 폴더에 원본 행마다 계산 열을 붙인 CSV로 생성됩니다. 원천세 공제 후 금액과 최종 금액은 USD와 원(USD × 환율)을 함께 표시합니다. 금액은 반올림하지 않습니다.
 
-- `인접` 폴더: 1~4번 파일은 Country가 US인 행만 Partner Revenue에서 원천세 10%를 뺍니다. 1·3번은 Asset Type이 Art Track·Sound Recording인 행에서 실연권료 11.47%를 추가로 뺍니다. Shorts는 5번 파일의 국가별 Shorts 수익(US만 원천세 10% 공제)을 수익이 있는 국가의 6번 파일 Engaged Views 점유율대로 나눕니다.
+- `인접` 폴더: 1~4번 파일은 Country가 US인 행만 Partner Revenue에서 원천세 10%를 뺍니다. 1·3번은 Asset Type이 Art Track·Sound Recording인 행에서 실연권료 11.47%를 추가로 뺍니다. Shorts는 5번 파일의 원천세 공제 후 수익(US만 10% 공제) 합계를, 5번 파일에 있는 국가의 6번 파일 행 전체 Engaged Views 점유율대로 나눕니다. 점유율은 국가별이 아니라 대상 행 전체 합계 기준입니다.
 - `저작` 폴더: 1~3번 파일의 Partner Revenue에 환율을 곱합니다.
 - `실연권료` 폴더: 1·3번 파일의 Art Track·Sound Recording 행만 모아 원천세 공제 후 금액의 11.47%를 계산합니다.
-- `정산금_요약_YYYYMM.csv`: 파일별 행 수, 원본 합계, 원천세 공제 후 합계, 결과 합계입니다.
+- `정산금_요약_YYYYMM.csv`: 파일별 행 수와 원본·원천세 공제 후·결과 합계를 USD와 원으로 모두 표시합니다.
 
 저작 오디오서비스는 `Publishing 4`와 같은 이유로 API로 제공되지 않아 계산 대상에서 제외합니다.
 

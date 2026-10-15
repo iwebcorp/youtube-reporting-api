@@ -4,8 +4,10 @@ import * as http from "http";
 import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { getMonthlyReadiness, isValidYearMonth } from "./monthlyReadiness.js";
+import { fillBlankCustomIds, listBlankCustomIdAssets } from "./packageCustomIds.js";
 
-type SettlementStep = "raw" | "managed" | "extract";
+// 4단계 Custom ID 입력은 실행 단계가 아니라 /api/custom-ids로 처리한다.
+type SettlementStep = "raw" | "managed" | "extract" | "settle";
 type RunState = {
   running: boolean;
   yearMonth: string | null;
@@ -17,7 +19,7 @@ type RunState = {
 
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 43127;
-const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract"];
+const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
 const UI_FILES: Record<string, { file: string; contentType: string }> = {
   "/": { file: "index.html", contentType: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
@@ -99,7 +101,7 @@ function normalizeSteps(value: unknown): SettlementStep[] {
 
 function normalizeExchangeRate(value: unknown, steps: SettlementStep[]): string {
   const exchangeRate = typeof value === "string" ? value.replace(/,/g, "").trim() : "";
-  if (!steps.includes("extract")) return "";
+  if (!steps.includes("settle")) return "";
   if (!/^\d+(\.\d+)?$/.test(exchangeRate) || Number(exchangeRate) <= 0) {
     throw new Error("정산금 계산에 사용할 환율(원/USD)을 숫자로 입력해 주세요.");
   }
@@ -107,9 +109,11 @@ function normalizeExchangeRate(value: unknown, steps: SettlementStep[]): string 
 }
 
 function resolveRunSteps(yearMonth: string, selected: SettlementStep[]): SettlementStep[] {
-  if (!selected.includes("extract")) return selected;
+  if (!selected.includes("extract") && !selected.includes("settle")) return selected;
   const readiness = getMonthlyReadiness(yearMonth);
   const required = new Set(selected);
+  if (selected.includes("settle") && !readiness.extract.ready) required.add("extract");
+  if (!required.has("extract")) return ALL_STEPS.filter((step) => required.has(step));
   if (!readiness.raw.ready) required.add("raw");
   if (!readiness.managed.ready) required.add("managed");
   return ALL_STEPS.filter((step) => required.has(step));
@@ -276,6 +280,38 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
     openPath(settlementDir);
     sendJson(response, 200, { opened: true });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/custom-ids") {
+    const yearMonth = url.searchParams.get("yearMonth") ?? "";
+    if (!isValidYearMonth(yearMonth)) {
+      sendJson(response, 400, { error: "yearMonth must use YYYYMM." });
+      return;
+    }
+    sendJson(response, 200, { assets: listBlankCustomIdAssets(yearMonth) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/custom-ids") {
+    // 실행 중인 단계가 정산 파일을 다시 쓰는 중일 수 있어 그동안은 받지 않는다.
+    if (child) {
+      sendJson(response, 409, { error: "실행 중인 작업이 끝난 뒤 Custom ID를 저장해 주세요." });
+      return;
+    }
+    const body = await readJsonBody(request) as { yearMonth?: unknown; values?: unknown };
+    const yearMonth = typeof body.yearMonth === "string" ? body.yearMonth : "";
+    if (!isValidYearMonth(yearMonth)) {
+      sendJson(response, 400, { error: "yearMonth must use YYYYMM." });
+      return;
+    }
+    if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) {
+      sendJson(response, 400, { error: "values must be an object." });
+      return;
+    }
+    const result = await fillBlankCustomIds(yearMonth, body.values as Record<string, unknown>);
+    appendLog(`[GUI] ${yearMonth} Custom ID ${result.filledAssets}개 자산, ${result.filledRows}행을 정산 파일에 입력했습니다. 남은 공란 ${result.remainingRows}행`);
+    sendJson(response, 200, result);
     return;
   }
 

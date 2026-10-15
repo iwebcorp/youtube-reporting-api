@@ -13,6 +13,13 @@ const runBadge = document.querySelector("#runBadge");
 const customIdWarning = document.querySelector("#customIdWarning");
 const customIdWarningText = document.querySelector("#customIdWarningText");
 const openCustomIdButton = document.querySelector("#openCustomIdButton");
+const customIdButton = document.querySelector("#customIdButton");
+const customIdDialog = document.querySelector("#customIdDialog");
+const customIdForm = document.querySelector("#customIdForm");
+const customIdRows = document.querySelector("#customIdRows");
+const customIdCancel = document.querySelector("#customIdCancel");
+const customIdSave = document.querySelector("#customIdSave");
+const customIdDialogNotice = document.querySelector("#customIdDialogNotice");
 const stageInputs = [...document.querySelectorAll('.stage-row input[type="checkbox"]')];
 let readiness = null;
 let runState = { running: false };
@@ -43,19 +50,30 @@ function renderReadiness() {
   setStatus("raw", readiness.raw.ready ? `준비 완료 ${readiness.raw.present}/${readiness.raw.expected}` : `${readiness.raw.present}/${readiness.raw.expected}`, readiness.raw.ready ? "ready" : "missing");
   setStatus("managed", readiness.managed.ready ? `준비 완료 ${readiness.managed.present}/${readiness.managed.expected}` : `${readiness.managed.present}/${readiness.managed.expected}`, readiness.managed.ready ? "ready" : "missing");
   setStatus("extract", readiness.extract.ready ? `생성 완료 ${readiness.extract.present}/${readiness.extract.expected}` : "생성 필요", readiness.extract.ready ? "ready" : "waiting");
-
   const warning = readiness.customIdWarning;
+  const blankRows = warning ? warning.blankRows : 0;
+  if (!readiness.extract.ready) setStatus("customId", "추출 필요", "waiting");
+  else if (blankRows > 0) setStatus("customId", `공란 ${blankRows}행 · 자산 ${warning.blankAssets}개`, "missing");
+  else setStatus("customId", "입력 완료", "ready");
+  setStatus("settle", readiness.settle.ready ? `생성 완료 ${readiness.settle.present}/${readiness.settle.expected}` : "생성 필요", readiness.settle.ready ? "ready" : "waiting");
+  renderCustomIdButton();
+
   customIdWarning.hidden = !warning;
   if (warning) {
     const messages = [];
     if (warning.blankRows > 0) {
-      messages.push(`Custom ID 공란 ${warning.blankRows}행(자산 ${warning.blankAssets}개)은 YouTube CMS에 등록된 값이 없어 API로 받을 수 없습니다. 목록의 파일·행·열 위치에 직접 입력해 주세요.`);
+      messages.push(`Custom ID 공란 ${warning.blankRows}행(자산 ${warning.blankAssets}개)은 YouTube CMS에 등록된 값이 없어 API로 받을 수 없습니다. 4단계 Custom ID 입력에서 Asset ID별로 입력해 주세요. 정산금 계산은 공란을 모두 채운 뒤 실행할 수 있습니다.`);
     }
     if (warning.noteRows > 0) {
       messages.push(`참고: CMS에 Custom ID가 여러 개 등록된 곡 ${warning.noteAssets}개는 정산 보고서 값을 사용했습니다. CMS 정리가 필요한지 목록에서 확인해 주세요.`);
     }
     customIdWarningText.textContent = messages.join(" ");
   }
+}
+
+function renderCustomIdButton() {
+  const blankRows = readiness?.customIdWarning ? readiness.customIdWarning.blankRows : 0;
+  customIdButton.disabled = runState.running || !readiness?.extract.ready || blankRows === 0;
 }
 
 function renderRunState() {
@@ -66,12 +84,20 @@ function renderRunState() {
   monthInput.disabled = runState.running;
   stageInputs.forEach((input) => { input.disabled = runState.running; });
   exchangeRateInput.disabled = runState.running;
+  renderCustomIdButton();
 }
 
+// 정산금 계산은 추출 결과가, 추출은 Raw·System-managed 데이터가 있어야 한다.
 function enforceExtractPrerequisites() {
   const extract = stageInputs.find((input) => input.value === "extract");
-  if (!extract.checked || !readiness) return;
+  const settle = stageInputs.find((input) => input.value === "settle");
+  if (!readiness) return;
   const added = [];
+  if (settle.checked && !readiness.extract.ready && !extract.checked) {
+    extract.checked = true;
+    added.push("정산 파일 추출");
+  }
+  if (!extract.checked) return;
   for (const stage of ["raw", "managed"]) {
     if (!readiness[stage].ready) {
       const input = stageInputs.find((candidate) => candidate.value === stage);
@@ -79,7 +105,7 @@ function enforceExtractPrerequisites() {
       input.checked = true;
     }
   }
-  notice.textContent = added.length > 0 ? `추출 선행 단계가 자동 선택되었습니다. ${added.join(", ")}` : "";
+  notice.textContent = added.length > 0 ? `선행 단계가 자동 선택되었습니다. ${added.join(", ")}` : "";
 }
 
 async function refreshStatus() {
@@ -116,19 +142,19 @@ monthInput.addEventListener("change", () => {
 
 stageInputs.forEach((input) => input.addEventListener("change", () => {
   enforceExtractPrerequisites();
-  if (!input.checked && ["raw", "managed"].includes(input.value)) enforceExtractPrerequisites();
+  if (!input.checked && ["raw", "managed", "extract"].includes(input.value)) enforceExtractPrerequisites();
 }));
 
-// 환율 칸 주변 글자를 눌러도 단계 체크가 바뀌지 않게 하고, 환율을 입력하면 추출 단계를 선택한다.
+// 환율 칸 주변 글자를 눌러도 단계 체크가 바뀌지 않게 하고, 환율을 입력하면 정산금 계산 단계를 선택한다.
 rateControl.addEventListener("click", (event) => {
   if (event.target === exchangeRateInput) return;
   event.preventDefault();
   exchangeRateInput.focus();
 });
 exchangeRateInput.addEventListener("input", () => {
-  const extract = stageInputs.find((input) => input.value === "extract");
-  if (exchangeRateInput.value.trim() && !extract.checked) {
-    extract.checked = true;
+  const settle = stageInputs.find((input) => input.value === "settle");
+  if (exchangeRateInput.value.trim() && !settle.checked) {
+    settle.checked = true;
     enforceExtractPrerequisites();
   }
 });
@@ -141,9 +167,14 @@ runButton.addEventListener("click", async () => {
     return;
   }
   const exchangeRate = exchangeRateInput.value.replace(/,/g, "").trim();
-  if (steps.includes("extract") && !(/^\d+(\.\d+)?$/.test(exchangeRate) && Number(exchangeRate) > 0)) {
+  if (steps.includes("settle") && !(/^\d+(\.\d+)?$/.test(exchangeRate) && Number(exchangeRate) > 0)) {
     notice.textContent = "정산금 계산에 사용할 환율(원/USD)을 숫자로 입력해 주세요.";
     exchangeRateInput.focus();
+    return;
+  }
+  const blankRows = readiness?.customIdWarning ? readiness.customIdWarning.blankRows : 0;
+  if (steps.includes("settle") && !steps.includes("extract") && blankRows > 0) {
+    notice.textContent = `Custom ID 공란 ${blankRows}행이 남아 있습니다. 4단계 Custom ID 입력을 마친 뒤 정산금 계산을 실행해 주세요.`;
     return;
   }
   try {
@@ -185,6 +216,70 @@ openCustomIdButton.addEventListener("click", async () => {
     await postJson("/api/open-custom-id", { yearMonth: compactMonth() });
   } catch (error) {
     notice.textContent = error.message;
+  }
+});
+
+// 4단계: 공란 Custom ID를 Asset ID별로 받아 전달 파일 원본에 저장한다.
+function renderCustomIdRows(assets) {
+  customIdRows.replaceChildren(...assets.map((asset) => {
+    const row = document.createElement("tr");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = asset.assetId;
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", `${asset.assetId} Custom ID`);
+    const cells = [asset.assetId, asset.assetTitle, `${asset.rows}행 · ${asset.files.join(", ")}`].map((text) => {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      return cell;
+    });
+    const inputCell = document.createElement("td");
+    inputCell.append(input);
+    row.append(...cells, inputCell);
+    return row;
+  }));
+}
+
+customIdButton.addEventListener("click", async () => {
+  try {
+    const response = await fetch(`/api/custom-ids?yearMonth=${compactMonth()}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    if (data.assets.length === 0) {
+      notice.textContent = "입력할 Custom ID 공란이 없습니다.";
+      refreshStatus();
+      return;
+    }
+    renderCustomIdRows(data.assets);
+    customIdDialogNotice.textContent = "";
+    customIdDialog.showModal();
+    customIdRows.querySelector("input")?.focus();
+  } catch (error) {
+    notice.textContent = error.message;
+  }
+});
+
+customIdCancel.addEventListener("click", () => customIdDialog.close());
+
+customIdForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const values = Object.fromEntries([...customIdRows.querySelectorAll("input")]
+    .map((input) => [input.name, input.value.trim()])
+    .filter(([, value]) => value));
+  if (Object.keys(values).length === 0) {
+    customIdDialogNotice.textContent = "저장할 Custom ID를 하나 이상 입력해 주세요.";
+    return;
+  }
+  customIdSave.disabled = true;
+  try {
+    const result = await postJson("/api/custom-ids", { yearMonth: compactMonth(), values });
+    customIdDialog.close();
+    await refreshStatus();
+    notice.textContent = `Custom ID ${result.filledRows}행을 저장했습니다.${result.remainingRows > 0 ? ` 남은 공란 ${result.remainingRows}행` : ""}`;
+  } catch (error) {
+    customIdDialogNotice.textContent = error.message;
+  } finally {
+    customIdSave.disabled = false;
   }
 });
 

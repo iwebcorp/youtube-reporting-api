@@ -1,4 +1,4 @@
-// 사용자가 Excel로 고쳐 저장했을 수 있는 정산 CSV를 인코딩을 판별해 읽고, Excel용 UTF-8 BOM CSV로 쓴다.
+// 사용자가 Excel로 고쳐 저장했을 수 있는 정산 CSV를 인코딩을 판별해 읽고, Excel용 UTF-8 BOM 또는 원래 인코딩으로 쓴다.
 import * as fs from "fs";
 import { once } from "events";
 import { parse } from "csv-parse";
@@ -41,18 +41,20 @@ function escapeCell(value: string): string {
   return /[",\r\n]/.test(value) || value !== value.trim() ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+// 기본은 Excel용 UTF-8 BOM이고, 추출 결과(CP949)를 고쳐 쓸 때는 원래 인코딩을 지정한다.
 export class CsvFileWriter {
   private readonly partialPath: string;
   private readonly stream: fs.WriteStream;
 
-  public constructor(private readonly filePath: string) {
+  public constructor(private readonly filePath: string, private readonly encoding: TextEncoding = "utf-8") {
     this.partialPath = `${filePath}.partial`;
-    this.stream = fs.createWriteStream(this.partialPath, { encoding: "utf-8" });
-    this.stream.write("﻿");
+    this.stream = fs.createWriteStream(this.partialPath);
+    if (encoding === "utf-8") this.stream.write("﻿");
   }
 
   public async write(values: string[]): Promise<void> {
-    if (!this.stream.write(`${values.map(escapeCell).join(",")}\n`)) {
+    const line = `${values.map(escapeCell).join(",")}\n`;
+    if (!this.stream.write(this.encoding === "cp949" ? iconv.encode(line, "cp949") : line)) {
       await once(this.stream, "drain");
     }
   }
@@ -62,4 +64,63 @@ export class CsvFileWriter {
     await once(this.stream, "finish");
     fs.renameSync(this.partialPath, this.filePath);
   }
+
+  // 원본을 건드리지 않고 쓰던 임시 파일만 지운다.
+  public async discard(): Promise<void> {
+    this.stream.end();
+    await once(this.stream, "finish");
+    fs.rmSync(this.partialPath, { force: true });
+  }
+}
+
+// 헤더 이름 → 열 번호. 같은 이름이 여러 번 나오면 첫 열을 쓴다.
+export type HeaderColumns = Map<string, number>;
+
+const HEADER_SEARCH_ROWS = 3;
+
+// 정산 CSV를 같은 자리에 원래 인코딩으로 다시 쓴다. headerColumn이 있는 줄을 헤더로 보고, 그 위의 "Asset Summary" 같은 줄은 그대로 둔다.
+// transform이 null을 돌려준 데이터 행은 지운다.
+export async function rewriteCsvFile(
+  filePath: string,
+  headerColumn: string,
+  transform: (record: string[], columns: HeaderColumns) => string[] | null,
+): Promise<{ kept: number; removed: number }> {
+  const encoding = await detectEncoding(filePath);
+  const writer = new CsvFileWriter(filePath, encoding);
+  let columns: HeaderColumns | undefined;
+  let recordIndex = 0;
+  let kept = 0;
+  let removed = 0;
+  try {
+    for await (const { record } of readCsvRecords(filePath)) {
+      recordIndex += 1;
+      if (!columns) {
+        const headers = record.map((value) => value.trim());
+        if (headers.includes(headerColumn)) {
+          columns = new Map();
+          headers.forEach((header, index) => { if (!columns!.has(header)) columns!.set(header, index); });
+        } else if (recordIndex >= HEADER_SEARCH_ROWS) {
+          throw new Error(`${filePath}에서 '${headerColumn}' 열을 찾지 못했습니다.`);
+        }
+        await writer.write(record);
+        continue;
+      }
+      const next = transform(record, columns);
+      if (!next) {
+        removed += 1;
+        continue;
+      }
+      await writer.write(next);
+      kept += 1;
+    }
+  } catch (error) {
+    await writer.discard();
+    throw error;
+  }
+  if (!columns) {
+    await writer.discard();
+    throw new Error(`${filePath}에서 '${headerColumn}' 열을 찾지 못했습니다.`);
+  }
+  await writer.close();
+  return { kept, removed };
 }

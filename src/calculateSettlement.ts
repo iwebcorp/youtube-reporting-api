@@ -1,4 +1,4 @@
-// Custom ID를 채운 정산 파일에 광수미디어 산식(docs/팡수.md)을 적용해 인접·저작·실연권료 정산금을 계산한다.
+// 5단계: Custom ID를 채운 정산 파일에 광수미디어 산식(docs/팡수.md)을 적용해 인접·저작·실연권료 정산금을 USD와 원으로 계산한다.
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -10,6 +10,7 @@ import {
   isValidYearMonth,
   settlementSummaryFileName,
 } from "./monthlyReadiness.js";
+import { ZERO_ROW_COLUMNS, isZeroAmount } from "./removeZeroRows.js";
 import { CsvFileWriter, readCsvRecords } from "./reporting/csvFile.js";
 import {
   ZERO,
@@ -39,13 +40,14 @@ const PARTNER_REVENUE = "Partner Revenue";
 const SHORTS_REVENUE = "Shorts Flat Fee Revenue USD";
 const ENGAGED_VIEWS = "Engaged Views";
 
-const AFTER_WITHHOLDING_COLUMN = "원천세 공제 후 Partner Revenue (USD)";
-const NEIGHBORING_COLUMN = "인접 정산금 (USD)";
-const PERFORMANCE_COLUMN = "실연권료 (USD)";
+// 원천세 공제 후 금액과 최종 금액은 USD와 원(환율 적용)을 나란히 붙인다.
+const NEIGHBORING_COLUMNS = ["원천세 공제 후 Partner Revenue (USD)", "원천세 공제 후 Partner Revenue (원)", "인접 정산금 (USD)", "인접 정산금 (원)"];
+const PERFORMANCE_COLUMNS = ["원천세 공제 후 Partner Revenue (USD)", "원천세 공제 후 Partner Revenue (원)", "실연권료 (USD)", "실연권료 (원)"];
 const PUBLISHING_COLUMN = "저작 정산금 (원)";
-const SHORTS_AFTER_WITHHOLDING_COLUMN = "원천세 공제 후 Shorts 수익 (USD)";
-const SHORTS_COLUMNS = ["국가 Shorts 수익 (USD)", "국가 Engaged Views 합계", "Engaged Views 점유율", "Shorts 정산금 (USD)"];
+const SHORTS_REVENUE_COLUMNS = ["원천세 공제 후 Shorts 수익 (USD)", "원천세 공제 후 Shorts 수익 (원)"];
+const SHORTS_COLUMNS = ["원천세 공제 후 Shorts 수익 합계 (USD)", "Engaged Views 합계", "Engaged Views 점유율", "Shorts 인접권료 (USD)", "Shorts 인접권료 (원)"];
 
+// 금액 합계는 모두 USD로 모으고, 요약에는 모든 금액을 USD와 환율을 곱한 원으로 함께 쓴다.
 interface SummaryRow {
   section: string;
   fileName: string;
@@ -53,7 +55,6 @@ interface SummaryRow {
   source: Decimal;
   afterWithholding: Decimal | null;
   result: Decimal;
-  unit: string;
   note: string;
 }
 
@@ -81,6 +82,7 @@ function isPerformanceAsset(cell: CellReader): boolean {
 }
 
 // 헤더 이름으로 열을 찾아 행마다 계산 열을 덧붙인다. 헤더 위의 "Asset Summary" 같은 줄은 그대로 옮긴다.
+// 3단계에서 지웠어야 할 금액 0인 행이 남아 있으면 여기서도 뺀다.
 async function transformCsv(options: {
   sourcePath: string;
   outputPath: string;
@@ -90,6 +92,7 @@ async function transformCsv(options: {
   compute: (cell: CellReader, location: string) => string[] | null;
 }): Promise<number> {
   const fileName = path.basename(options.sourcePath);
+  const zeroColumn = ZERO_ROW_COLUMNS[fileName];
   if (!fs.existsSync(options.sourcePath)) {
     throw new Error(`[Settlement] 정산 파일이 없습니다: ${options.sourcePath}`);
   }
@@ -116,7 +119,9 @@ async function transformCsv(options: {
     }
 
     const headerColumns = columns;
-    const added = options.compute((column) => record[headerColumns.get(column) ?? -1] ?? "", `${fileName} ${line}행`);
+    const cell: CellReader = (column) => record[headerColumns.get(column) ?? -1] ?? "";
+    if (zeroColumn && isZeroAmount(cell(zeroColumn))) continue;
+    const added = options.compute(cell, `${fileName} ${line}행`);
     if (!added) continue;
     await writer.write([...record, ...added]);
     rowCount += 1;
@@ -126,12 +131,13 @@ async function transformCsv(options: {
   return rowCount;
 }
 
-// 인접 광고·레드·오디오서비스: 미국 행만 원천세 10%를 빼고, 1·3번은 Art Track·Sound Recording 행에서 실연권료 11.47%를 뺀다.
+// 인접 광고·조정·레드·오디오서비스: 미국 행만 원천세 10%를 빼고, 1·3번은 Art Track·Sound Recording 행에서 실연권료 11.47%를 뺀다.
 async function calculateNeighboring(
   packageDir: string,
   outputDir: string,
   fileName: string,
   withPerformance: boolean,
+  exchangeRate: Decimal,
 ): Promise<{ summary: SummaryRow; performance: SummaryRow | null }> {
   const summary: SummaryRow = {
     section: "인접",
@@ -140,14 +146,13 @@ async function calculateNeighboring(
     source: ZERO,
     afterWithholding: ZERO,
     result: ZERO,
-    unit: "USD",
     note: withPerformance ? "US 원천세 10% 공제, Art Track·Sound Recording 실연권료 11.47% 공제" : "US 원천세 10% 공제",
   };
   summary.rows = await transformCsv({
     sourcePath: path.join(packageDir, fileName),
     outputPath: path.join(outputDir, SETTLEMENT_NEIGHBORING_FOLDER, fileName),
     requiredColumns: withPerformance ? [COUNTRY, ASSET_TYPE, PARTNER_REVENUE] : [COUNTRY, PARTNER_REVENUE],
-    addedColumns: [AFTER_WITHHOLDING_COLUMN, NEIGHBORING_COLUMN],
+    addedColumns: NEIGHBORING_COLUMNS,
     compute: (cell, location) => {
       const revenue = readAmount(cell, PARTNER_REVENUE, location);
       const net = afterWithholding(cell(COUNTRY), revenue);
@@ -156,7 +161,7 @@ async function calculateNeighboring(
       summary.source = add(summary.source, revenue);
       summary.afterWithholding = add(summary.afterWithholding!, net);
       summary.result = add(summary.result, neighboring);
-      return [formatDecimal(net), formatDecimal(neighboring)];
+      return withWon([net, neighboring], exchangeRate);
     },
   });
   if (!withPerformance) return { summary, performance: null };
@@ -169,14 +174,13 @@ async function calculateNeighboring(
     source: ZERO,
     afterWithholding: ZERO,
     result: ZERO,
-    unit: "USD",
     note: "Art Track·Sound Recording 행, US 원천세 10% 공제 후 11.47%",
   };
   performance.rows = await transformCsv({
     sourcePath: path.join(packageDir, fileName),
     outputPath: path.join(outputDir, SETTLEMENT_PERFORMANCE_FOLDER, fileName),
     requiredColumns: [COUNTRY, ASSET_TYPE, PARTNER_REVENUE],
-    addedColumns: [AFTER_WITHHOLDING_COLUMN, PERFORMANCE_COLUMN],
+    addedColumns: PERFORMANCE_COLUMNS,
     compute: (cell, location) => {
       if (!isPerformanceAsset(cell)) return null;
       const revenue = readAmount(cell, PARTNER_REVENUE, location);
@@ -185,16 +189,22 @@ async function calculateNeighboring(
       performance.source = add(performance.source, revenue);
       performance.afterWithholding = add(performance.afterWithholding!, net);
       performance.result = add(performance.result, amount);
-      return [formatDecimal(net), formatDecimal(amount)];
+      return withWon([net, amount], exchangeRate);
     },
   });
   return { summary, performance };
 }
 
-// Shorts: 국가별 Shorts 수익(US만 원천세 10% 공제)을 수익이 있는 국가의 Engaged Views 점유율대로 행마다 나눈다.
-async function calculateShorts(packageDir: string, outputDir: string): Promise<SummaryRow[]> {
+// 각 USD 금액 뒤에 환율을 곱한 원 금액을 붙인다.
+function withWon(amounts: Decimal[], exchangeRate: Decimal): string[] {
+  return amounts.flatMap((amount) => [formatDecimal(amount), formatDecimal(multiply(amount, exchangeRate))]);
+}
+
+// Shorts: 5번 파일의 원천세 공제 후 수익(US만 10% 공제) 합계를, 5번 파일에 있는 국가의 6번 파일 행 전체 Engaged Views 점유율대로 나눈다.
+// 점유율은 국가별이 아니라 대상 행 전체 합계 기준이다(6_shorts_video_usage_detail-점유율산식예시.md).
+async function calculateShorts(packageDir: string, outputDir: string, exchangeRate: Decimal): Promise<SummaryRow[]> {
   const revenueFileName = "5_publishing_shorts_revenue_summary.csv";
-  const countryRevenue = new Map<string, Decimal>();
+  const countries = new Set<string>();
   const revenueSummary: SummaryRow = {
     section: "인접",
     fileName: revenueFileName,
@@ -202,29 +212,29 @@ async function calculateShorts(packageDir: string, outputDir: string): Promise<S
     source: ZERO,
     afterWithholding: ZERO,
     result: ZERO,
-    unit: "USD",
     note: "US 원천세 10% 공제",
   };
   revenueSummary.rows = await transformCsv({
     sourcePath: path.join(packageDir, revenueFileName),
     outputPath: path.join(outputDir, SETTLEMENT_NEIGHBORING_FOLDER, revenueFileName),
     requiredColumns: [COUNTRY, SHORTS_REVENUE],
-    addedColumns: [SHORTS_AFTER_WITHHOLDING_COLUMN],
+    addedColumns: SHORTS_REVENUE_COLUMNS,
     compute: (cell, location) => {
       const country = cell(COUNTRY).trim();
       const revenue = readAmount(cell, SHORTS_REVENUE, location);
       const net = afterWithholding(country, revenue);
-      if (!isZero(net)) countryRevenue.set(country, add(countryRevenue.get(country) ?? ZERO, net));
+      countries.add(country);
       revenueSummary.source = add(revenueSummary.source, revenue);
       revenueSummary.afterWithholding = add(revenueSummary.afterWithholding!, net);
       revenueSummary.result = add(revenueSummary.result, net);
-      return [formatDecimal(net)];
+      return withWon([net], exchangeRate);
     },
   });
+  const totalRevenue = revenueSummary.result;
 
-  // 6번 파일의 Category는 분배와 관계없이 수익이 있는 국가의 모든 행을 대상으로 점유율을 낸다.
+  // 6번 파일의 Category는 분배와 관계없이 대상 국가의 모든 행을 대상으로 점유율을 낸다.
   const usagePath = path.join(packageDir, SHORTS_VIDEO_FILE);
-  const countryEngagedViews = new Map<string, Decimal>();
+  let totalViews = ZERO;
   let headerColumns: { country: number; engagedViews: number } | undefined;
   for await (const { record, line } of readCsvRecords(usagePath)) {
     if (!headerColumns) {
@@ -234,53 +244,38 @@ async function calculateShorts(packageDir: string, outputDir: string): Promise<S
       }
       continue;
     }
-    const country = (record[headerColumns.country] ?? "").trim();
-    if (!countryRevenue.has(country)) continue;
+    if (!countries.has((record[headerColumns.country] ?? "").trim())) continue;
     const views = record[headerColumns.engagedViews] ?? "";
-    const engagedViews = readAmount(() => views, ENGAGED_VIEWS, `${SHORTS_VIDEO_FILE} ${line}행`);
-    countryEngagedViews.set(country, add(countryEngagedViews.get(country) ?? ZERO, engagedViews));
+    totalViews = add(totalViews, readAmount(() => views, ENGAGED_VIEWS, `${SHORTS_VIDEO_FILE} ${line}행`));
+  }
+  if (isZero(totalViews) && !isZero(totalRevenue)) {
+    throw new Error(`[Settlement] Shorts 수익 ${formatDecimal(totalRevenue)} USD를 나눌 ${SHORTS_VIDEO_FILE} Engaged Views가 없습니다.`);
   }
 
   const usageSummary: SummaryRow = {
     section: "인접",
     fileName: SHORTS_VIDEO_FILE,
     rows: 0,
-    source: ZERO,
-    afterWithholding: ZERO,
+    source: totalRevenue,
+    afterWithholding: totalRevenue,
     result: ZERO,
-    unit: "USD",
-    note: "국가별 Shorts 수익을 Engaged Views 점유율로 분배",
+    note: `5번 파일 원천세 공제 후 합계를 Engaged Views 점유율(전체 ${formatDecimal(totalViews)})로 분배`,
   };
-  const unallocated = [...countryRevenue.keys()].filter((country) => isZero(countryEngagedViews.get(country) ?? ZERO));
-  for (const [country, revenue] of countryRevenue) {
-    if (unallocated.includes(country)) continue;
-    usageSummary.source = add(usageSummary.source, revenue);
-    usageSummary.afterWithholding = add(usageSummary.afterWithholding!, revenue);
-  }
   usageSummary.rows = await transformCsv({
     sourcePath: usagePath,
     outputPath: path.join(outputDir, SETTLEMENT_NEIGHBORING_FOLDER, SHORTS_VIDEO_FILE),
     requiredColumns: [COUNTRY, ENGAGED_VIEWS],
     addedColumns: SHORTS_COLUMNS,
     compute: (cell, location) => {
-      const country = cell(COUNTRY).trim();
-      const revenue = countryRevenue.get(country);
-      const totalViews = countryEngagedViews.get(country);
-      if (!revenue || !totalViews || isZero(totalViews)) return null;
+      if (!countries.has(cell(COUNTRY).trim())) return null;
       const engagedViews = readAmount(cell, ENGAGED_VIEWS, location);
-      const amount = divide(multiply(revenue, engagedViews), totalViews);
+      const share = divide(engagedViews, totalViews);
+      // 잘린 점유율을 곱하면 오차가 커지므로 수익 × Engaged Views를 먼저 계산하고 나눈다.
+      const amount = divide(multiply(totalRevenue, engagedViews), totalViews);
       usageSummary.result = add(usageSummary.result, amount);
-      return [formatDecimal(revenue), formatDecimal(totalViews), formatDecimal(divide(engagedViews, totalViews)), formatDecimal(amount)];
+      return [formatDecimal(totalRevenue), formatDecimal(totalViews), formatDecimal(share), ...withWon([amount], exchangeRate)];
     },
   });
-
-  if (unallocated.length > 0) {
-    const amount = unallocated.reduce((sum, country) => add(sum, countryRevenue.get(country)!), ZERO);
-    usageSummary.note += `. Engaged Views가 없어 분배하지 못한 국가 ${unallocated.join(" ")} (${formatDecimal(amount)} USD)`;
-    console.warn(
-      `[Settlement] 경고: Shorts 수익이 있지만 6번 파일에 Engaged Views가 없는 국가 ${unallocated.length}개(${unallocated.join(", ")}), ${formatDecimal(amount)} USD는 분배하지 못했습니다.`,
-    );
-  }
   return [revenueSummary, usageSummary];
 }
 
@@ -298,8 +293,7 @@ async function calculatePublishing(
     source: ZERO,
     afterWithholding: null,
     result: ZERO,
-    unit: "원",
-    note: `Partner Revenue × 환율 ${formatDecimal(exchangeRate)}`,
+    note: "Partner Revenue × 환율",
   };
   summary.rows = await transformCsv({
     sourcePath: path.join(packageDir, fileName),
@@ -308,28 +302,41 @@ async function calculatePublishing(
     addedColumns: [PUBLISHING_COLUMN],
     compute: (cell, location) => {
       const revenue = readAmount(cell, PARTNER_REVENUE, location);
-      const amount = multiply(revenue, exchangeRate);
       summary.source = add(summary.source, revenue);
-      summary.result = add(summary.result, amount);
-      return [formatDecimal(amount)];
+      summary.result = add(summary.result, revenue);
+      return [formatDecimal(multiply(revenue, exchangeRate))];
     },
   });
   return summary;
 }
 
 async function writeSummary(filePath: string, exchangeRate: Decimal, rows: SummaryRow[]): Promise<void> {
+  const won = (value: Decimal) => formatDecimal(multiply(value, exchangeRate));
   const writer = new CsvFileWriter(filePath);
   await writer.write(["환율 (원/USD)", formatDecimal(exchangeRate)]);
-  await writer.write(["구분", "파일", "계산 행 수", "원본 금액 합계 (USD)", "원천세 공제 후 합계 (USD)", "결과 합계", "결과 단위", "산식"]);
+  await writer.write([
+    "구분",
+    "파일",
+    "계산 행 수",
+    "원본 금액 합계 (USD)",
+    "원본 금액 합계 (원)",
+    "원천세 공제 후 합계 (USD)",
+    "원천세 공제 후 합계 (원)",
+    "결과 합계 (USD)",
+    "결과 합계 (원)",
+    "산식",
+  ]);
   for (const row of rows) {
     await writer.write([
       row.section,
       row.fileName,
       String(row.rows),
       formatDecimal(row.source),
+      won(row.source),
       row.afterWithholding ? formatDecimal(row.afterWithholding) : "",
+      row.afterWithholding ? won(row.afterWithholding) : "",
       formatDecimal(row.result),
-      row.unit,
+      won(row.result),
       row.note,
     ]);
   }
@@ -359,18 +366,18 @@ async function run(): Promise<void> {
     ["3_neighboring_monthly_sub.csv", true],
     ["4_neighboring_financial_detail.csv", false],
   ] as const) {
-    const { summary, performance } = await calculateNeighboring(packageDir, outputDir, fileName, withPerformance);
+    const { summary, performance } = await calculateNeighboring(packageDir, outputDir, fileName, withPerformance, exchangeRate);
     summaries.push(summary);
     if (performance) performances.push(performance);
     console.log(`[Settlement] 인접 ${fileName} rows=${summary.rows} 정산금=${formatDecimal(summary.result)} USD`);
   }
-  summaries.push(...await calculateShorts(packageDir, outputDir));
+  summaries.push(...await calculateShorts(packageDir, outputDir, exchangeRate));
   console.log(`[Settlement] 인접 Shorts 정산금=${formatDecimal(summaries[summaries.length - 1]!.result)} USD`);
 
   for (const fileName of ["1_publishing_daily_ad.csv", "2_publishing_daily_ad_adj.csv", "3_publishing_monthly_sub.csv"]) {
     const summary = await calculatePublishing(packageDir, outputDir, fileName, exchangeRate);
     summaries.push(summary);
-    console.log(`[Settlement] 저작 ${fileName} rows=${summary.rows} 정산금=${formatDecimal(summary.result)} 원`);
+    console.log(`[Settlement] 저작 ${fileName} rows=${summary.rows} 정산금=${formatDecimal(multiply(summary.result, exchangeRate))} 원`);
   }
   for (const performance of performances) {
     console.log(`[Settlement] 실연권료 ${performance.fileName} rows=${performance.rows} 매출=${formatDecimal(performance.result)} USD`);
