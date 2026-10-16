@@ -7,7 +7,7 @@ import {
   customIdInputFileName,
   getMonthlyPaths,
 } from "./monthlyReadiness.js";
-import { CsvFileWriter, rewriteCsvFile } from "./reporting/csvFile.js";
+import { CsvFileWriter, assertWritable, rewriteCsvFile } from "./reporting/csvFile.js";
 
 const CUSTOM_ID_HEADER = "Custom ID";
 const ASSET_ID_HEADER = "Asset ID";
@@ -66,6 +66,10 @@ export async function fillBlankCustomIds(
 
   const { packageDir } = getMonthlyPaths(yearMonth);
   const files = new Set([...values.keys()].flatMap((assetId) => blanks.get(assetId)!.files));
+  // 일부 파일만 바뀐 채 멈추지 않도록, 고칠 파일이 모두 Excel 등에서 닫혀 있는지 먼저 확인한다.
+  for (const filePath of [...[...files].map((fileName) => path.join(packageDir, fileName)), readIssueList(yearMonth)!.filePath]) {
+    assertWritable(filePath);
+  }
   let filledRows = 0;
   for (const fileName of files) {
     await rewriteCsvFile(path.join(packageDir, fileName), CUSTOM_ID_HEADER, (record, columns) => {

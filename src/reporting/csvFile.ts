@@ -1,6 +1,8 @@
 // 사용자가 Excel로 고쳐 저장했을 수 있는 정산 CSV를 인코딩을 판별해 읽고, Excel용 UTF-8 BOM 또는 원래 인코딩으로 쓴다.
 import * as fs from "fs";
+import * as path from "path";
 import { once } from "events";
+import { setTimeout as sleep } from "timers/promises";
 import { parse } from "csv-parse";
 import iconv from "iconv-lite";
 
@@ -37,6 +39,28 @@ export async function* readCsvRecords(filePath: string): AsyncIterable<{ record:
   }
 }
 
+// Windows에서 Excel이 연 파일, OneDrive·백신이 잡고 있는 파일을 바꾸려 할 때 나는 오류
+const LOCKED_FILE_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+const RENAME_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_500];
+
+function isLockedFileError(error: unknown): boolean {
+  return LOCKED_FILE_CODES.has((error as NodeJS.ErrnoException).code ?? "");
+}
+
+function lockedFileMessage(filePath: string): string {
+  return `${path.basename(filePath)} 파일이 다른 프로그램(Excel 등)에서 열려 있어 저장할 수 없습니다. 파일을 닫고 다시 시도해 주세요.`;
+}
+
+// 고치기 전에 파일을 쓸 수 있는지 확인한다. Excel이 연 파일은 쓰기 모드로 열리지 않는다.
+export function assertWritable(filePath: string): void {
+  try {
+    fs.closeSync(fs.openSync(filePath, "r+"));
+  } catch (error) {
+    if (isLockedFileError(error)) throw new Error(lockedFileMessage(filePath));
+    throw error;
+  }
+}
+
 function escapeCell(value: string): string {
   return /[",\r\n]/.test(value) || value !== value.trim() ? `"${value.replace(/"/g, '""')}"` : value;
 }
@@ -59,10 +83,24 @@ export class CsvFileWriter {
     }
   }
 
+  // OneDrive 동기화처럼 잠깐 잡힌 경우는 몇 번 다시 시도하고, 계속 잠겨 있으면 임시 파일을 지우고 알린다.
   public async close(): Promise<void> {
     this.stream.end();
     await once(this.stream, "finish");
-    fs.renameSync(this.partialPath, this.filePath);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.renameSync(this.partialPath, this.filePath);
+        return;
+      } catch (error) {
+        if (!isLockedFileError(error)) throw error;
+        const delay = RENAME_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          fs.rmSync(this.partialPath, { force: true });
+          throw new Error(lockedFileMessage(this.filePath));
+        }
+        await sleep(delay);
+      }
+    }
   }
 
   // 원본을 건드리지 않고 쓰던 임시 파일만 지운다.
