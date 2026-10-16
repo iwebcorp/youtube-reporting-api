@@ -21,9 +21,10 @@ const HOST = "127.0.0.1";
 const DEFAULT_PORT = 43127;
 const ALL_STEPS: SettlementStep[] = ["raw", "managed", "extract", "settle"];
 const UI_FILES: Record<string, { file: string; contentType: string }> = {
-  "/": { file: "index.html", contentType: "text/html; charset=utf-8" },
-  "/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
-  "/style.css": { file: "style.css", contentType: "text/css; charset=utf-8" },
+  "/": { file: "ui/index.html", contentType: "text/html; charset=utf-8" },
+  "/app.js": { file: "ui/app.js", contentType: "text/javascript; charset=utf-8" },
+  "/style.css": { file: "ui/style.css", contentType: "text/css; charset=utf-8" },
+  "/favicon.ico": { file: "public/favicon.ico", contentType: "image/x-icon" },
 };
 const LOG_LIMIT = 1_500;
 
@@ -201,7 +202,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
   const url = new URL(request.url ?? "/", `http://${HOST}`);
   const staticFile = UI_FILES[url.pathname];
   if (request.method === "GET" && staticFile) {
-    const filePath = path.resolve("ui", staticFile.file);
+    const filePath = path.resolve(staticFile.file);
     response.writeHead(200, { "Content-Type": staticFile.contentType, "Cache-Control": "no-store" });
     fs.createReadStream(filePath).pipe(response);
     return;
