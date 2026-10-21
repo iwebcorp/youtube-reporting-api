@@ -5,7 +5,7 @@ import * as zlib from "zlib";
 import { pathToFileURL } from "url";
 import { parse } from "csv-parse";
 import iconv from "iconv-lite";
-import { csvEscape, ensureDirectory } from "./reporting/utils.js";
+import { csvEscape, ensureDirectory, normalizeCustomId } from "./reporting/utils.js";
 
 interface AssetMetadataOverride {
   title: string;
@@ -115,7 +115,7 @@ async function run(argv: string[] = process.argv.slice(2)): Promise<void> {
         row["Asset Title"] = override.title;
       }
       if (override.customId) {
-        if (!row["Custom ID"]) customIdFilled += 1;
+        if (!row["Custom ID"] && normalizeCustomId(override.customId)) customIdFilled += 1;
         row["Custom ID"] = override.customId;
       }
       if (override.isrc) {
@@ -124,6 +124,7 @@ async function run(argv: string[] = process.argv.slice(2)): Promise<void> {
       }
     }
 
+    row["Custom ID"] = normalizeCustomId(row["Custom ID"]);
     lines.push(
       header
         .map((column) => textColumns.has(column) ? csvEscape(row[column]) : String(row[column] ?? "").trim())

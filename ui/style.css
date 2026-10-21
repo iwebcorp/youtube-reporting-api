@@ -86,7 +86,7 @@ h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
 .stage-row.manual { cursor: default; }
 .stage-row.manual:hover { background: transparent; }
 .stage-check { width: 18px; flex-shrink: 0; }
-.stage-index { width: 28px; color: #899094; font-family: Consolas, monospace; font-size: 12px; }
+.stage-index { width: 28px; color: #687176; font-family: Consolas, monospace; font-size: 12px; }
 .stage-copy { display: grid; flex: 1; min-width: 0; gap: 4px; }
 .stage-copy strong { font-size: 15px; }
 .stage-copy span { color: #687176; font-size: 13px; }

@@ -55,7 +55,8 @@ function renderReadiness() {
   if (!readiness.extract.ready) setStatus("customId", "추출 필요", "waiting");
   else if (blankRows > 0) setStatus("customId", `공란 ${blankRows}행 · 자산 ${warning.blankAssets}개`, "missing");
   else setStatus("customId", "입력 완료", "ready");
-  if (readiness.settle.stale) setStatus("settle", "다시 계산 필요", "missing");
+  if (!readiness.extract.ready || blankRows > 0) setStatus("settle", "4단계 완료 필요", "waiting");
+  else if (readiness.settle.stale) setStatus("settle", "다시 계산 필요", "missing");
   else setStatus("settle", readiness.settle.ready ? `생성 완료 ${readiness.settle.present}/${readiness.settle.expected}` : "생성 필요", readiness.settle.ready ? "ready" : "waiting");
   renderCustomIdButton();
 
@@ -84,20 +85,21 @@ function renderRunState() {
   stopButton.disabled = !runState.running;
   monthInput.disabled = runState.running;
   stageInputs.forEach((input) => { input.disabled = runState.running; });
-  exchangeRateInput.disabled = runState.running;
+  const settle = stageInputs.find((input) => input.value === "settle");
+  const customIdsComplete = readiness?.extract.ready && (readiness.customIdWarning?.blankRows ?? 0) === 0;
+  settle.disabled = runState.running || !customIdsComplete;
+  if (!customIdsComplete) settle.checked = false;
+  exchangeRateInput.disabled = settle.disabled;
   renderCustomIdButton();
 }
 
-// 정산금 계산은 추출 결과가, 추출은 Raw·System-managed 데이터가 있어야 한다.
+// 추출은 Raw·System-managed 데이터가 있어야 한다.
 function enforceExtractPrerequisites() {
   const extract = stageInputs.find((input) => input.value === "extract");
   const settle = stageInputs.find((input) => input.value === "settle");
+  if (settle.disabled) settle.checked = false;
   if (!readiness) return;
   const added = [];
-  if (settle.checked && !readiness.extract.ready && !extract.checked) {
-    extract.checked = true;
-    added.push("정산 파일 추출");
-  }
   if (!extract.checked) return;
   for (const stage of ["raw", "managed"]) {
     if (!readiness[stage].ready) {
@@ -111,9 +113,11 @@ function enforceExtractPrerequisites() {
 
 async function refreshStatus() {
   if (!monthInput.value) return;
+  const yearMonth = compactMonth();
   try {
-    const response = await fetch(`/api/status?yearMonth=${compactMonth()}`);
+    const response = await fetch(`/api/status?yearMonth=${yearMonth}`);
     const data = await response.json();
+    if (yearMonth !== compactMonth()) return;
     if (!response.ok) throw new Error(data.error);
     readiness = data.readiness;
     runState = data.run;
@@ -138,6 +142,9 @@ async function postJson(url, body = {}) {
 
 monthInput.addEventListener("change", () => {
   notice.textContent = "";
+  readiness = null;
+  renderRunState();
+  setStatus("settle", "확인 중", "loading");
   refreshStatus();
 });
 
@@ -154,7 +161,7 @@ rateControl.addEventListener("click", (event) => {
 });
 exchangeRateInput.addEventListener("input", () => {
   const settle = stageInputs.find((input) => input.value === "settle");
-  if (exchangeRateInput.value.trim() && !settle.checked) {
+  if (!settle.disabled && exchangeRateInput.value.trim() && !settle.checked) {
     settle.checked = true;
     enforceExtractPrerequisites();
   }
@@ -261,9 +268,13 @@ customIdButton.addEventListener("click", async () => {
 });
 
 customIdCancel.addEventListener("click", () => customIdDialog.close());
+customIdDialog.addEventListener("cancel", (event) => {
+  if (customIdSave.disabled) event.preventDefault();
+});
 
 customIdForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (customIdSave.disabled) return;
   const values = Object.fromEntries([...customIdRows.querySelectorAll("input")]
     .map((input) => [input.name, input.value.trim()])
     .filter(([, value]) => value));
@@ -272,6 +283,7 @@ customIdForm.addEventListener("submit", async (event) => {
     return;
   }
   customIdSave.disabled = true;
+  customIdCancel.disabled = true;
   try {
     const result = await postJson("/api/custom-ids", { yearMonth: compactMonth(), values });
     customIdDialog.close();
@@ -281,6 +293,7 @@ customIdForm.addEventListener("submit", async (event) => {
     customIdDialogNotice.textContent = error.message;
   } finally {
     customIdSave.disabled = false;
+    customIdCancel.disabled = false;
   }
 });
 
