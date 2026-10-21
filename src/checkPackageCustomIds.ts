@@ -14,7 +14,7 @@ import { clean, csvEscape, ensureDirectory, parseCliArgs, resolveExtractionConfi
 
 const HEADER_SEARCH_ROWS = 2;
 const CUSTOM_ID_HEADER = "Custom ID";
-const BLANK_GUIDE = "YouTube CMS에 Custom ID가 등록되어 있지 않아 API로 받을 수 없습니다. 이 행의 Custom ID 칸에 직접 입력해 주세요.";
+const BLANK_GUIDE = "Custom ID가 없거나 숫자로만 구성된 값이 아니어서 공란으로 처리되었습니다. 이 행의 Custom ID 칸에 직접 입력해 주세요.";
 const NOTE_GUIDE = "YouTube CMS에 이 곡의 Custom ID가 여러 개 등록되어 있습니다. 정산 파일에는 YouTube 정산 보고서가 준 현재 값을 사용했으므로 입력은 필요 없습니다. CMS 정리가 필요한지 확인해 주세요.";
 
 interface CustomIdIssueRow {

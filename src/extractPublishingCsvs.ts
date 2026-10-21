@@ -15,6 +15,7 @@ import {
   csvEscape,
   listMonthlyReportGroups,
   listMonthlySystemManagedFiles,
+  normalizeCustomId,
   parseCliArgs,
   resolveExtractionConfig,
 } from "./reporting/utils.js";
@@ -787,7 +788,7 @@ function writeAdjustmentRow(
     row["asset_labels"]?.trim() ?? "",
     rowChannelId,
     rowAssetType || metadata.assetType,
-    rowCustomId || metadata.customId,
+    normalizeCustomId(rowCustomId || metadata.customId),
     rowIsrc || metadata.isrc,
     rowIswc || metadata.iswc,
     rowHfa || metadata.hfa,
@@ -838,7 +839,7 @@ function writeMonthlyAdSummary(
     const partnerPartnerServedPartnerSoldRevenue = summary.partnerPartnerServedPartnerSoldRevenue.toFixed(12);
 
     const title = summary.sourceTitle || metadata.title;
-    const customId = summary.sourceCustomId || metadata.customId;
+    const customId = normalizeCustomId(summary.sourceCustomId || metadata.customId);
     const isrc = summary.sourceIsrc || metadata.isrc;
     const row = [
       summary.assetId,
@@ -889,7 +890,7 @@ function writeMonthlySummary(
 
     const metadata = classifier.getMetadata(summary.assetId);
     const title = summary.sourceTitle || metadata.title;
-    const customId = summary.sourceCustomId || metadata.customId;
+    const customId = normalizeCustomId(summary.sourceCustomId || metadata.customId);
     const row = [
       summary.adjustmentType,
       yearMonth,

@@ -37,9 +37,9 @@ YouTube Reporting API와 Content Manager 권한을 사용해 월별 원천 데�
 
 정산 파일은 이 단계에서 받은 해당 월 API 원본만 사용합니다. 과거 월 캐시, CMS에서 수동으로 받은 파일, 기존 산출물을 대체 자료로 사용하지 않습니다.
 
-Custom ID는 정산 원본, 월말 자산 메타데이터, Content ID API 조회 결과 순서로 채웁니다. 그래도 Custom ID가 빈 행은 YouTube CMS에 값이 등록되지 않아 API로 받을 수 없는 경우입니다. 추출은 그대로 완료하고, `reports_custom_id_YYYYMM/custom_id_input_required_YYYYMM.csv`에 파일명, 행 번호, 열 위치, Asset ID를 `공란` 유형으로 남깁니다. 4단계 `Custom ID 입력` 창에 공란 자산이 Asset ID별로 표시되며, 입력한 값은 전달용 정산 파일 10개의 해당 공란에 바로 저장되고 목록에서 빠집니다. 비워 둔 자산은 다음에 다시 입력할 수 있습니다.
+Custom ID는 정산 원본, 월말 자산 메타데이터, Content ID API 조회 결과 순서로 채웁니다. 최종 선택된 값은 숫자로만 구성된 경우에 사용하며, 값이 하나여도 영문 등 숫자 외 문자가 포함되면 공란으로 처리합니다. 앞자리 0은 유지합니다. 추출은 그대로 완료하고, `reports_custom_id_YYYYMM/custom_id_input_required_YYYYMM.csv`에 파일명, 행 번호, 열 위치, Asset ID를 `공란` 유형으로 남깁니다. 4단계 `Custom ID 입력` 창에 공란 자산이 Asset ID별로 표시되며, 입력한 값은 전달용 정산 파일 10개의 해당 공란에 바로 저장되고 목록에서 빠집니다. 비워 둔 자산은 다음에 다시 입력할 수 있습니다.
 
-저작권 곡 중 CMS에 Custom ID가 여러 개 등록된 곡은 메타데이터로 값을 추정하지 않습니다. 정산 보고서나 Content ID API가 준 값을 그대로 쓰고, 같은 목록에 `참고` 유형으로 현재 값과 CMS 등록 값을 함께 남깁니다. `참고` 행은 입력할 필요가 없으며 CMS 정리 여부를 확인하는 용도입니다. CMS에 Custom ID를 등록한 뒤 `System-managed Data`와 `정산 파일 추출`을 다시 실행해도 됩니다.
+저작권 곡 중 CMS에 Custom ID가 여러 개 등록된 곡은 메타데이터로 값을 추정하지 않습니다. 정산 보고서나 Content ID API가 준 값이 숫자로만 구성된 경우 사용하고, 같은 목록에 `참고` 유형으로 현재 값과 CMS 등록 값을 함께 남깁니다. `참고` 행은 입력할 필요가 없으며 CMS 정리 여부를 확인하는 용도입니다. CMS에 Custom ID를 등록한 뒤 `System-managed Data`와 `정산 파일 추출`을 다시 실행해도 됩니다.
 
 ## 생성 결과
 

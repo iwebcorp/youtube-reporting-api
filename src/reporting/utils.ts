@@ -22,6 +22,11 @@ export function csvEscape(value: unknown): string {
   return `"${clean(value).replace(/"/g, '""')}"`;
 }
 
+export function normalizeCustomId(value: unknown): string {
+  const normalized = clean(value);
+  return /^\d+$/.test(normalized) ? normalized : "";
+}
+
 export function normalizeHeader(header: string): string {
   return clean(header).toLowerCase().replace(/[_\s:()-]+/g, "");
 }

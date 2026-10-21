@@ -14,6 +14,7 @@ import { createNeighboringWriters, closeWriters } from "./reporting/writers.js";
 import {
   csvEscape,
   listMonthlySystemManagedFiles,
+  normalizeCustomId,
   parseCliArgs,
   resolveExtractionConfig,
 } from "./reporting/utils.js";
@@ -335,7 +336,7 @@ function writeNeighboringAdRow(
   const title = row["asset_title"]?.trim() || metadata.title;
   const channelId = row["asset_channel_id"]?.trim() || row["channel_id"]?.trim() || metadata.channelId;
   const assetType = row["asset_type"]?.trim() || metadata.assetType;
-  const customId = row["custom_id"]?.trim() || metadata.customId;
+  const customId = normalizeCustomId(row["custom_id"]?.trim() || metadata.customId);
   const isrc = row["isrc"]?.trim() || metadata.isrc;
   const upc = row["upc"]?.trim() || metadata.upc;
   const artist = row["artist"]?.trim() || metadata.artist;
@@ -388,7 +389,7 @@ function writeNeighboringMonthlySummary(
     const metadata = classifier.getMetadata(summary.assetId);
     const title = summary.sourceTitle || metadata.title;
     const assetType = summary.sourceAssetType || metadata.assetType;
-    const customId = summary.sourceCustomId || metadata.customId;
+    const customId = normalizeCustomId(summary.sourceCustomId || metadata.customId);
     const isrc = summary.sourceIsrc || metadata.isrc;
     const upc = summary.sourceUpc || metadata.upc;
     const grid = summary.sourceGrid;
@@ -441,7 +442,7 @@ function writeNeighboringFinancialDetail(
 
     const metadata = classifier.getMetadata(detail.assetId);
     const title = detail.title || metadata.title;
-    const customId = detail.customId || metadata.customId;
+    const customId = normalizeCustomId(detail.customId || metadata.customId);
     const isrc = detail.isrc || metadata.isrc;
     const upc = detail.upc || metadata.upc;
     const grid = detail.grid;

@@ -4,7 +4,7 @@ import { pathToFileURL } from "url";
 import iconv from "iconv-lite";
 import { AssetClassifier } from "./assetClassifier.js";
 import { parseCsvRows } from "./reporting/parsers.js";
-import { csvEscape, ensureDirectory, parseCliArgs, parseNumber, resolveExtractionConfig } from "./reporting/utils.js";
+import { csvEscape, ensureDirectory, normalizeCustomId, parseCliArgs, parseNumber, resolveExtractionConfig } from "./reporting/utils.js";
 
 interface AggregatedShortsRow {
   assetId: string;
@@ -170,7 +170,7 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
         csvEscape(row.country),
         csvEscape(row.assetId),
         csvEscape(metadata.title),
-        csvEscape(metadata.customId),
+        csvEscape(normalizeCustomId(metadata.customId)),
         csvEscape(metadata.isrc),
         csvEscape(metadata.iswc),
         csvEscape(metadata.writers),
@@ -221,7 +221,7 @@ async function run(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
         csvEscape(row.country),
         csvEscape(row.assetId),
         csvEscape(metadata.title),
-        csvEscape(metadata.customId),
+        csvEscape(normalizeCustomId(metadata.customId)),
         csvEscape(metadata.isrc),
         csvEscape(metadata.iswc),
         csvEscape(metadata.writers),
