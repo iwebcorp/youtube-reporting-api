@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
 import { createInterface } from "readline/promises";
+import { reviewEnglishCustomIds } from "./englishCustomIds.js";
 import {
   ASSET_METADATA_REPORT_TYPE,
   PACKAGE_FILES,
@@ -293,6 +294,11 @@ async function runSettleStage(yearMonth: string, paths: MonthlyPaths, exchangeRa
     throw new Error(
       `[MonthlySettlement] Custom ID 공란 ${customIdWarning.blankRows}행(자산 ${customIdWarning.blankAssets}개)이 남아 있습니다. 4단계 Custom ID 입력을 마친 뒤 5단계를 실행해 주세요.`,
     );
+  }
+
+  const englishAssets = await reviewEnglishCustomIds(yearMonth, paths.packageDir);
+  if (englishAssets.length > 0) {
+    throw new Error(`[MonthlySettlement] 영문 Custom ID ${englishAssets.length}개 자산이 남아 있습니다. 4단계 영문 Custom ID 수정을 마친 뒤 5단계를 실행해 주세요.`);
   }
 
   console.log("\n[MonthlySettlement] STAGE settle START");

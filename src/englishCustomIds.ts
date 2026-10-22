@@ -1,0 +1,183 @@
+// 전달용 CSV의 단일 영문 Custom ID를 찾아 확인 목록을 만들고 사용자 입력으로 교체한다.
+import * as fs from "fs";
+import * as path from "path";
+import { PACKAGE_FILES, getMonthlyPaths } from "./monthlyReadiness.js";
+import { CsvFileWriter, assertWritable, readCsvRecords, rewriteCsvFile } from "./reporting/csvFile.js";
+import { isEnglishCustomId } from "./reporting/utils.js";
+
+export interface EnglishCustomIdAsset {
+  assetId: string;
+  assetTitle: string;
+  currentValue: string;
+  rows: number;
+  files: string[];
+}
+
+export function englishCustomIdReportPath(yearMonth: string): string {
+  return path.join(getMonthlyPaths(yearMonth).customIdDir, `custom_id_english_${yearMonth}.csv`);
+}
+
+// GUI의 상태 조회와 모달 조회가 겹쳐도 같은 파일을 반복해서 읽거나 목록을 동시에 쓰지 않는다.
+const reviews = new Map<string, { fingerprint: string; result: Promise<EnglishCustomIdAsset[]> }>();
+
+function packageFingerprint(packageDir: string): string {
+  return PACKAGE_FILES.map((file) => {
+    const stat = fs.statSync(path.join(packageDir, file));
+    return `${file}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+  }).join("|");
+}
+
+export async function listEnglishCustomIdAssets(packageDir: string): Promise<EnglishCustomIdAsset[]> {
+  const assets = new Map<string, EnglishCustomIdAsset>();
+  const values = new Map<string, Set<string>>();
+  for (const fileName of PACKAGE_FILES) {
+    let columns: { assetId: number; title: number; customId: number } | undefined;
+    let recordIndex = 0;
+    for await (const { record } of readCsvRecords(path.join(packageDir, fileName))) {
+      recordIndex += 1;
+      if (!columns) {
+        const header = record.map((value) => value.trim());
+        const customId = header.indexOf("Custom ID");
+        if (customId < 0) {
+          if (recordIndex >= 3) break;
+          continue;
+        }
+        const assetId = header.indexOf("Asset ID");
+        if (assetId < 0) throw new Error(`${fileName}에 Asset ID 열이 없습니다.`);
+        columns = { assetId, title: header.indexOf("Asset Title"), customId };
+        continue;
+      }
+      const assetId = (record[columns.assetId] ?? "").trim();
+      const currentValue = (record[columns.customId] ?? "").trim();
+      if (!assetId || !currentValue) continue;
+      const registered = values.get(assetId) ?? new Set<string>();
+      registered.add(currentValue);
+      values.set(assetId, registered);
+      if (!isEnglishCustomId(currentValue)) continue;
+      const asset = assets.get(assetId) ?? {
+        assetId, assetTitle: (record[columns.title] ?? "").trim(), currentValue, rows: 0, files: [],
+      };
+      asset.rows += 1;
+      if (!asset.files.includes(fileName)) asset.files.push(fileName);
+      assets.set(assetId, asset);
+    }
+  }
+  // 같은 자산에 서로 다른 값이 있는 경우 임의로 하나를 선택해 덮어쓰지 않는다.
+  return [...assets.values()].filter((asset) => values.get(asset.assetId)?.size === 1)
+    .sort((left, right) => left.assetId.localeCompare(right.assetId));
+}
+
+export async function reviewEnglishCustomIds(
+  yearMonth: string,
+  packageDir = getMonthlyPaths(yearMonth).packageDir,
+): Promise<EnglishCustomIdAsset[]> {
+  const reportPath = path.resolve(englishCustomIdReportPath(yearMonth));
+  const packageState = packageFingerprint(packageDir);
+  const fingerprint = `${path.resolve(packageDir)}|${packageState}`;
+  const cached = reviews.get(reportPath);
+  if (cached?.fingerprint === fingerprint) {
+    const assets = await cached.result;
+    if (fs.existsSync(reportPath)) return assets;
+  }
+  const result = (async () => {
+    const assets = await listEnglishCustomIdAssets(packageDir);
+    if (packageFingerprint(packageDir) !== packageState) {
+      throw new Error("검사 중 정산 파일이 변경되었습니다. 다시 조회해 주세요.");
+    }
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    if (fs.existsSync(reportPath)) assertWritable(reportPath);
+    const writer = new CsvFileWriter(reportPath);
+    try {
+      await writer.write(["Asset ID", "Asset Title", "기존 Custom ID", "대상 행 수", "대상 파일", "안내"]);
+      for (const asset of assets) {
+        await writer.write([asset.assetId, asset.assetTitle, asset.currentValue, String(asset.rows), asset.files.join("; "),
+          "4단계 영문 Custom ID 수정에서 숫자로 입력하면 전달용 CSV에 바로 반영됩니다."]);
+      }
+    } catch (error) {
+      await writer.discard();
+      throw error;
+    }
+    await writer.close();
+    return assets;
+  })();
+  reviews.set(reportPath, { fingerprint, result });
+  try {
+    return await result;
+  } catch (error) {
+    reviews.delete(reportPath);
+    throw error;
+  }
+}
+
+export async function replaceEnglishCustomIds(
+  yearMonth: string,
+  input: Record<string, unknown>,
+): Promise<{ updatedAssets: number; updatedRows: number; remainingAssets: number }> {
+  const assets = new Map((await reviewEnglishCustomIds(yearMonth)).map((asset) => [asset.assetId, asset]));
+  const replacements = new Map<string, { currentValue: string; value: string }>();
+  for (const [assetId, raw] of Object.entries(input)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Custom ID 입력 형식이 올바르지 않습니다.");
+    const entry = raw as { currentValue?: unknown; value?: unknown };
+    const value = typeof entry.value === "string" ? entry.value.trim() : "";
+    if (!value) continue;
+    if (!/^\d+$/.test(value)) throw new Error(`새 Custom ID는 숫자만 입력해 주세요. Asset ID ${assetId}`);
+    const asset = assets.get(assetId);
+    if (!asset || entry.currentValue !== asset.currentValue) {
+      throw new Error(`목록을 연 뒤 Custom ID가 변경되었거나 수정 대상이 아닙니다. 다시 조회해 주세요. Asset ID ${assetId}`);
+    }
+    replacements.set(assetId, { currentValue: asset.currentValue, value });
+  }
+  if (replacements.size === 0) throw new Error("저장할 Custom ID를 하나 이상 입력해 주세요.");
+  const { packageDir } = getMonthlyPaths(yearMonth);
+  const files = new Set([...replacements.keys()].flatMap((id) => assets.get(id)!.files));
+  for (const file of files) assertWritable(path.join(packageDir, file));
+  assertWritable(englishCustomIdReportPath(yearMonth));
+  const beforeWrite = packageFingerprint(packageDir);
+  const stagingDir = fs.mkdtempSync(path.join(packageDir, ".custom-id-"));
+  const moved: string[] = [];
+  let preserveRecoveryFiles = false;
+  let updatedRows = 0;
+  try {
+    for (const file of files) {
+      const stagedPath = path.join(stagingDir, file);
+      fs.copyFileSync(path.join(packageDir, file), stagedPath);
+      await rewriteCsvFile(stagedPath, "Custom ID", (record, columns) => {
+        const index = columns.get("Custom ID")!;
+        const replacement = replacements.get((record[columns.get("Asset ID") ?? -1] ?? "").trim());
+        if (!replacement || (record[index] ?? "").trim() !== replacement.currentValue) return record;
+        const next = [...record];
+        next[index] = replacement.value;
+        updatedRows += 1;
+        return next;
+      });
+    }
+    if (packageFingerprint(packageDir) !== beforeWrite) throw new Error("저장 중 정산 파일이 변경되었습니다. 다시 조회해 주세요.");
+    // 모든 수정본을 만든 뒤 교체한다. 파일 잠금으로 일부 교체가 실패하면 원본을 복원한다.
+    for (const file of files) {
+      fs.renameSync(path.join(packageDir, file), path.join(stagingDir, `${file}.original`));
+      moved.push(file);
+      fs.renameSync(path.join(stagingDir, file), path.join(packageDir, file));
+    }
+  } catch (error) {
+    for (const file of moved.reverse()) {
+      try {
+        fs.renameSync(path.join(stagingDir, `${file}.original`), path.join(packageDir, file));
+      } catch {
+        preserveRecoveryFiles = true;
+      }
+    }
+    if (preserveRecoveryFiles) {
+      throw new Error(`일부 파일을 복원하지 못했습니다. Excel을 닫고 원본 보관 폴더를 확인해 주세요. ${path.resolve(stagingDir)}`);
+    }
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code && ["EPERM", "EBUSY", "EACCES"].includes(code)) {
+      throw new Error("정산 CSV가 다른 프로그램에서 열려 있어 저장하지 못했습니다. Excel을 닫고 다시 저장해 주세요.");
+    }
+    throw error;
+  } finally {
+    if (!preserveRecoveryFiles) fs.rmSync(stagingDir, { recursive: true, force: true });
+    reviews.delete(path.resolve(englishCustomIdReportPath(yearMonth)));
+  }
+  const remaining = await reviewEnglishCustomIds(yearMonth);
+  return { updatedAssets: replacements.size, updatedRows, remainingAssets: remaining.length };
+}

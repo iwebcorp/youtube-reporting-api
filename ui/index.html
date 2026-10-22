@@ -64,9 +64,12 @@
           <span class="stage-index">04</span>
           <span class="stage-copy">
             <strong>Custom ID 입력</strong>
-            <span>공란인 Custom ID를 Asset ID별로 입력해 전달 파일에 반영</span>
+            <span>공란 입력 · 단일 영문 값 수정 후 전달 파일에 반영</span>
           </span>
-          <button id="customIdButton" class="button secondary" type="button" disabled>Custom ID 입력</button>
+          <div class="custom-id-actions">
+            <button id="customIdButton" class="button secondary" type="button" disabled>공란 Custom ID 입력</button>
+            <button id="englishIdButton" class="button secondary" type="button" disabled>영문 Custom ID 수정</button>
+          </div>
           <span class="stage-status loading">확인 중</span>
         </div>
         <label class="stage-row" data-stage="settle">
@@ -95,7 +98,7 @@
         <form id="customIdForm" method="dialog">
           <header class="dialog-header">
             <h2 id="custom-id-heading">Custom ID 입력</h2>
-            <p>YouTube CMS에 Custom ID가 없어 API로 받지 못한 자산입니다. 입력한 값은 전달 파일의 공란에 바로 저장됩니다. 비워 둔 자산은 저장하지 않습니다.</p>
+            <p>Custom ID가 없거나 사용할 수 없는 값이어서 공란인 자산입니다. 입력한 값은 전달 파일의 공란에 바로 저장됩니다. 비워 둔 자산은 저장하지 않습니다.</p>
           </header>
           <div class="dialog-body">
             <table class="custom-id-table">
@@ -109,6 +112,31 @@
           <footer class="dialog-actions">
             <button id="customIdCancel" class="button secondary" type="button">닫기</button>
             <button id="customIdSave" class="button primary" type="submit">저장</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog id="englishIdDialog" class="custom-id-dialog english-id-dialog" aria-labelledby="english-id-heading" aria-describedby="english-id-description">
+        <form id="englishIdForm" method="dialog">
+          <header class="dialog-header">
+            <h2 id="english-id-heading">영문 Custom ID 수정</h2>
+            <p id="english-id-description">전달용 CSV에서 값이 하나이고 영문이 포함된 자산입니다. 기존 값을 확인한 뒤 새 Custom ID를 숫자로 입력해 주세요. 저장하면 표시된 파일의 해당 값이 바뀝니다. 비워 둔 자산은 유지됩니다.</p>
+            <p>수정값은 이번 달 전달 파일에만 적용됩니다. 3단계를 다시 추출하면 다시 입력해야 합니다.</p>
+            <p id="englishIdSummary" role="status"></p>
+            <button id="openEnglishIdButton" class="text-button" type="button">영문 Custom ID 목록 CSV 열기</button>
+          </header>
+          <div class="dialog-body">
+            <table class="custom-id-table">
+              <thead>
+                <tr><th scope="col">Asset ID</th><th scope="col">Asset Title</th><th scope="col">기존 Custom ID</th><th scope="col">수정 위치</th><th scope="col">새 Custom ID</th></tr>
+              </thead>
+              <tbody id="englishIdRows"></tbody>
+            </table>
+          </div>
+          <p id="englishIdNotice" class="notice" role="status"></p>
+          <footer class="dialog-actions">
+            <button id="englishIdCancel" class="button secondary" type="button">닫기</button>
+            <button id="englishIdSave" class="button primary" type="submit">입력한 값 저장</button>
           </footer>
         </form>
       </dialog>

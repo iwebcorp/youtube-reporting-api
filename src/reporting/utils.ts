@@ -24,7 +24,12 @@ export function csvEscape(value: unknown): string {
 
 export function normalizeCustomId(value: unknown): string {
   const normalized = clean(value);
-  return /^\d+$/.test(normalized) ? normalized : "";
+  // 단일 영문 값은 사용자가 기존 값을 확인하고 전달용 CSV에서 직접 수정하도록 보존한다.
+  return /^\d+$/.test(normalized) || isEnglishCustomId(normalized) ? normalized : "";
+}
+
+export function isEnglishCustomId(value: string): boolean {
+  return /[A-Za-z]/.test(value) && !/[,;|\r\n\t]/.test(value);
 }
 
 export function normalizeHeader(header: string): string {

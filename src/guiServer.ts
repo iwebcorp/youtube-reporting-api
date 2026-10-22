@@ -5,6 +5,7 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { getMonthlyReadiness, isValidYearMonth } from "./monthlyReadiness.js";
 import { fillBlankCustomIds, listBlankCustomIdAssets } from "./packageCustomIds.js";
+import { englishCustomIdReportPath, replaceEnglishCustomIds, reviewEnglishCustomIds } from "./englishCustomIds.js";
 
 // 4단계 Custom ID 입력은 실행 단계가 아니라 /api/custom-ids로 처리한다.
 type SettlementStep = "raw" | "managed" | "extract" | "settle";
@@ -29,6 +30,7 @@ const UI_FILES: Record<string, { file: string; contentType: string }> = {
 const LOG_LIMIT = 1_500;
 
 let child: ChildProcess | null = null;
+let customIdsBusy = false;
 let logs: string[] = [];
 let state: RunState = {
   running: false,
@@ -232,7 +234,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
   }
 
   if (request.method === "POST" && url.pathname === "/api/run") {
-    if (child) {
+    if (child || customIdsBusy) {
       sendJson(response, 409, { error: "Another monthly job is already running." });
       return;
     }
@@ -243,6 +245,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
     const selectedSteps = normalizeSteps(body.steps);
+    if (customIdsBusy || child) throw new Error("Custom ID 작업 또는 실행 중인 단계가 끝난 뒤 다시 실행해 주세요.");
     const steps = startRun(yearMonth, selectedSteps, normalizeExchangeRate(body.exchangeRate, selectedSteps));
     sendJson(response, 202, { steps });
     return;
@@ -296,7 +299,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
   if (request.method === "POST" && url.pathname === "/api/custom-ids") {
     // 실행 중인 단계가 정산 파일을 다시 쓰는 중일 수 있어 그동안은 받지 않는다.
-    if (child) {
+    if (child || customIdsBusy) {
       sendJson(response, 409, { error: "실행 중인 작업이 끝난 뒤 Custom ID를 저장해 주세요." });
       return;
     }
@@ -310,9 +313,50 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       sendJson(response, 400, { error: "values must be an object." });
       return;
     }
-    const result = await fillBlankCustomIds(yearMonth, body.values as Record<string, unknown>);
-    appendLog(`[GUI] ${yearMonth} Custom ID ${result.filledAssets}개 자산, ${result.filledRows}행을 정산 파일에 입력했습니다. 남은 공란 ${result.remainingRows}행`);
-    sendJson(response, 200, result);
+    if (child || customIdsBusy) throw new Error("진행 중인 Custom ID 작업이 끝난 뒤 다시 저장해 주세요.");
+    customIdsBusy = true;
+    try {
+      const result = await fillBlankCustomIds(yearMonth, body.values as Record<string, unknown>);
+      appendLog(`[GUI] ${yearMonth} Custom ID ${result.filledAssets}개 자산, ${result.filledRows}행을 정산 파일에 입력했습니다. 남은 공란 ${result.remainingRows}행`);
+      sendJson(response, 200, result);
+    } finally {
+      customIdsBusy = false;
+    }
+    return;
+  }
+
+  if (["GET", "POST"].includes(request.method ?? "") && url.pathname === "/api/english-custom-ids") {
+    if (child || customIdsBusy) {
+      sendJson(response, 409, { error: "진행 중인 작업이 끝난 뒤 영문 Custom ID를 조회하거나 저장해 주세요." });
+      return;
+    }
+    customIdsBusy = true;
+    try {
+      const body = request.method === "POST" ? await readJsonBody(request) as { yearMonth?: unknown; values?: unknown } : {};
+      const yearMonth = request.method === "GET" ? url.searchParams.get("yearMonth") ?? "" : typeof body.yearMonth === "string" ? body.yearMonth : "";
+      if (!isValidYearMonth(yearMonth)) throw new Error("yearMonth must use YYYYMM.");
+      if (request.method === "GET") {
+        sendJson(response, 200, { assets: await reviewEnglishCustomIds(yearMonth) });
+      } else {
+        if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new Error("values must be an object.");
+        const result = await replaceEnglishCustomIds(yearMonth, body.values as Record<string, unknown>);
+        appendLog(`[GUI] ${yearMonth} 영문 Custom ID ${result.updatedAssets}개 자산, ${result.updatedRows}행 수정. 남은 대상 ${result.remainingAssets}개`);
+        sendJson(response, 200, result);
+      }
+    } finally {
+      customIdsBusy = false;
+    }
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/open-english-custom-id") {
+    const body = await readJsonBody(request) as { yearMonth?: unknown };
+    const yearMonth = typeof body.yearMonth === "string" ? body.yearMonth : "";
+    if (!isValidYearMonth(yearMonth)) throw new Error("yearMonth must use YYYYMM.");
+    const filePath = englishCustomIdReportPath(yearMonth);
+    if (!fs.existsSync(filePath)) throw new Error("영문 Custom ID 수정을 열어 목록을 먼저 조회해 주세요.");
+    openPath(filePath);
+    sendJson(response, 200, { opened: true });
     return;
   }
 
