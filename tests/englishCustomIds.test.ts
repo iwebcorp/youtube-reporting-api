@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import iconv from "iconv-lite";
 import { parse } from "csv-parse/sync";
+import { gzipSync } from "node:zlib";
 import { PACKAGE_FILES, getMonthlyPaths } from "../src/monthlyReadiness.ts";
 import { englishCustomIdReportPath, listEnglishCustomIdAssets, replaceEnglishCustomIds, reviewEnglishCustomIds } from "../src/englishCustomIds.ts";
 import { normalizeCustomId } from "../src/reporting/utils.ts";
@@ -118,4 +119,33 @@ test("전달용 CSV 조회·저장과 목록 갱신", async (t) => {
     await reviewEnglishCustomIds(month);
     assert.ok(fs.existsSync(englishCustomIdReportPath(month)));
   });
+});
+
+test("자산 메타데이터의 자동 생성 자산(WEB·YOUTUBE_USER)은 영문 수정 대상에서 제외한다", async (t) => {
+  const previousCwd = process.cwd();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "english-custom-ids-auto-"));
+  process.chdir(directory);
+  t.after(() => { process.chdir(previousCwd); fs.rmSync(directory, { recursive: true, force: true }); });
+  const month = "202609";
+  const { packageDir, assetMetadataDir } = getMonthlyPaths(month);
+  fs.mkdirSync(packageDir);
+  fs.mkdirSync(assetMetadataDir, { recursive: true });
+  for (const file of PACKAGE_FILES) fs.writeFileSync(path.join(packageDir, file), "Asset ID,Asset Title,Custom ID,Partner Revenue\n");
+  fs.writeFileSync(path.join(packageDir, "6_shorts_video_usage_detail.csv"),
+    "Asset ID,Asset Title,Custom ID,Video ID\nW,Auto generated asset,0n9o_rV121Y,0n9o_rV121Y\nU,업로드 뮤직비디오,QvWeUkizG9U,QvWeUkizG9U\nS,음원,abc123,x\n");
+  const metadataPath = path.join(assetMetadataDir, `${month}_content_owner_asset_a3_20260930__20261001.csv`);
+  fs.writeFileSync(metadataPath, gzipSync(
+    "asset_id,asset_type,metadata_origination,custom_id\nW,WEB,Unknown,0n9o_rV121Y\nU,MUSIC_VIDEO,YOUTUBE_USER,QvWeUkizG9U\nS,SOUND_RECORDING,CMS_USER,abc123\n",
+  ));
+
+  assert.deepEqual((await reviewEnglishCustomIds(month)).map((asset) => asset.assetId), ["S"]);
+  assert.deepEqual((await listEnglishCustomIdAssets(packageDir)).map((asset) => asset.assetId), ["S", "U", "W"]);
+  const report = parse(fs.readFileSync(englishCustomIdReportPath(month), "utf8"), { bom: true, columns: true });
+  assert.deepEqual(report.map((row: Record<string, string>) => row["Asset ID"]), ["S"]);
+  await assert.rejects(replaceEnglishCustomIds(month, { W: { currentValue: "0n9o_rV121Y", value: "1" } }), /수정 대상이 아닙니다/);
+
+  // 메타데이터가 바뀌면 캐시를 쓰지 않고 다시 분류한다.
+  fs.writeFileSync(metadataPath, gzipSync("asset_id,asset_type,metadata_origination,custom_id\nW,WEB,Unknown,0n9o_rV121Y\n"));
+  fs.utimesSync(metadataPath, new Date(), new Date(Date.now() + 5_000));
+  assert.deepEqual((await reviewEnglishCustomIds(month)).map((asset) => asset.assetId), ["S", "U"]);
 });
