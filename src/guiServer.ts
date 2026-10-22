@@ -5,7 +5,7 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { getMonthlyReadiness, isValidYearMonth } from "./monthlyReadiness.js";
 import { fillBlankCustomIds, listBlankCustomIdAssets } from "./packageCustomIds.js";
-import { englishCustomIdReportPath, replaceEnglishCustomIds, reviewEnglishCustomIds } from "./englishCustomIds.js";
+import { replaceEnglishCustomIds, reviewEnglishCustomIds } from "./englishCustomIds.js";
 
 // 4단계 Custom ID 입력은 실행 단계가 아니라 /api/custom-ids로 처리한다.
 type SettlementStep = "raw" | "managed" | "extract" | "settle";
@@ -346,17 +346,6 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     } finally {
       customIdsBusy = false;
     }
-    return;
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/open-english-custom-id") {
-    const body = await readJsonBody(request) as { yearMonth?: unknown };
-    const yearMonth = typeof body.yearMonth === "string" ? body.yearMonth : "";
-    if (!isValidYearMonth(yearMonth)) throw new Error("yearMonth must use YYYYMM.");
-    const filePath = englishCustomIdReportPath(yearMonth);
-    if (!fs.existsSync(filePath)) throw new Error("영문 Custom ID 수정을 열어 목록을 먼저 조회해 주세요.");
-    openPath(filePath);
-    sendJson(response, 200, { opened: true });
     return;
   }
 

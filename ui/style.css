@@ -118,9 +118,10 @@ h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
 }
 .custom-id-dialog::backdrop { background: rgb(32 36 38 / .45); }
 .english-id-dialog { width: min(1040px, calc(100% - 32px)); }
+.english-id-dialog .dialog-body { flex: 1 1 auto; min-height: 180px; }
+.english-id-dialog .dialog-header, .english-id-dialog .dialog-actions { flex-shrink: 0; }
 .english-id-dialog .custom-id-table { min-width: 760px; }
 .english-id-dialog input:focus-visible, .english-id-dialog button:focus-visible { outline: 2px solid #17694f; outline-offset: 2px; }
-.english-id-dialog .text-button { min-height: 40px; text-decoration: underline; text-underline-offset: 3px; }
 .custom-id-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
 .dialog-header { padding: 18px 20px 12px; border-bottom: 1px solid #d7dcde; }
 .dialog-header p { margin: 6px 0 0; color: #596166; font-size: 13px; line-height: 1.5; }

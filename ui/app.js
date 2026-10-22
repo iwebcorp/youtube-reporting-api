@@ -28,7 +28,6 @@ const englishIdSave = document.querySelector("#englishIdSave");
 const englishIdCancel = document.querySelector("#englishIdCancel");
 const englishIdNotice = document.querySelector("#englishIdNotice");
 const englishIdSummary = document.querySelector("#englishIdSummary");
-const openEnglishIdButton = document.querySelector("#openEnglishIdButton");
 const stageInputs = [...document.querySelectorAll('.stage-row input[type="checkbox"]')];
 let readiness = null;
 let runState = { running: false };
@@ -348,28 +347,30 @@ async function loadEnglishCustomIds() {
 }
 
 englishIdButton.addEventListener("click", async () => {
-  if (!await loadEnglishCustomIds()) return;
   englishDialogMonth = compactMonth();
+  englishIdRows.replaceChildren();
+  englishIdSummary.textContent = "전달용 CSV에서 수정할 Custom ID를 확인하고 있습니다…";
+  englishIdNotice.textContent = "";
+  englishIdSave.disabled = true;
+  englishIdDialog.showModal();
+  const loaded = await loadEnglishCustomIds();
+  if (!englishIdDialog.open) return;
+  if (!loaded) {
+    englishIdSummary.textContent = "목록을 불러오지 못했습니다.";
+    englishIdNotice.textContent = notice.textContent || "창을 닫고 다시 열어 주세요.";
+    return;
+  }
   renderCustomIdRows(englishAssets, englishIdRows, true);
   englishIdSummary.textContent = englishAssets.length > 0
     ? `${englishAssets.length}개 자산 · ${englishAssets.reduce((sum, asset) => sum + asset.rows, 0)}행이 수정 대상입니다.`
-    : "수정할 단일 영문 Custom ID가 없습니다. 전달용 CSV 검사를 마쳤습니다.";
-  englishIdNotice.textContent = "";
+    : "수정할 단일 영문 Custom ID가 없습니다. 공란인 값은 ‘공란 Custom ID 입력’에서 입력해 주세요.";
   englishIdSave.disabled = englishAssets.length === 0;
-  englishIdDialog.showModal();
   (englishIdRows.querySelector("input") ?? englishIdCancel).focus();
 });
 
 let englishSaving = false;
 englishIdCancel.addEventListener("click", () => englishIdDialog.close());
 englishIdDialog.addEventListener("cancel", (event) => { if (englishSaving) event.preventDefault(); });
-openEnglishIdButton.addEventListener("click", async () => {
-  try {
-    await postJson("/api/open-english-custom-id", { yearMonth: englishDialogMonth });
-  } catch (error) {
-    englishIdNotice.textContent = error.message;
-  }
-});
 englishIdForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (englishSaving) return;
@@ -383,7 +384,6 @@ englishIdForm.addEventListener("submit", async (event) => {
   englishSaving = true;
   englishIdSave.disabled = true;
   englishIdCancel.disabled = true;
-  openEnglishIdButton.disabled = true;
   englishIdNotice.textContent = "전달용 CSV에 저장하고 목록을 갱신하고 있습니다…";
   try {
     const result = await postJson("/api/english-custom-ids", { yearMonth: englishDialogMonth, values });
@@ -397,7 +397,6 @@ englishIdForm.addEventListener("submit", async (event) => {
     englishSaving = false;
     englishIdSave.disabled = false;
     englishIdCancel.disabled = false;
-    openEnglishIdButton.disabled = false;
     renderReadiness();
     renderRunState();
   }
