@@ -125,6 +125,9 @@ h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
 .custom-id-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
 .dialog-header { padding: 18px 20px 12px; border-bottom: 1px solid #d7dcde; }
 .dialog-header p { margin: 6px 0 0; color: #596166; font-size: 13px; line-height: 1.5; }
+.file-filter { display: block; margin-top: 10px; font-size: 13px; }
+.file-filter[hidden] { display: none; }
+.file-filter select { max-width: 100%; padding: 4px; font: inherit; }
 .dialog-body { overflow: auto; padding: 0 20px; }
 .custom-id-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .custom-id-table th { position: sticky; top: 0; padding: 10px 8px; background: #fff; border-bottom: 1px solid #cfd4d6; color: #596166; font-size: 12px; text-align: left; }

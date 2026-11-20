@@ -256,6 +256,12 @@ function renderCustomIdRows(assets, target = customIdRows, english = false) {
     if (english) {
       input.inputMode = "numeric";
       input.pattern = "[0-9]+";
+      input.addEventListener("invalid", () => {
+        if (row.hidden) {
+          select.value = "";
+          select.dispatchEvent(new Event("change"));
+        }
+      });
       input.title = "숫자만 입력해 주세요. 앞자리 0은 유지됩니다.";
       input.dataset.currentValue = asset.currentValue;
     }
@@ -270,6 +276,24 @@ function renderCustomIdRows(assets, target = customIdRows, english = false) {
     row.append(...cells, inputCell);
     return row;
   }));
+
+  const filter = target.closest("dialog").querySelector(".file-filter");
+  const select = filter.querySelector("select");
+  const counts = new Map();
+  for (const asset of assets) {
+    for (const file of asset.files) counts.set(file, (counts.get(file) ?? 0) + 1);
+  }
+  select.replaceChildren(new Option(`전체 (${assets.length})`, ""));
+  for (const file of [...counts.keys()].sort()) {
+    select.add(new Option(`${file} (${counts.get(file)})`, file));
+  }
+  filter.hidden = assets.length === 0;
+  select.onchange = () => {
+    assets.forEach((asset, index) => {
+      target.rows[index].hidden = Boolean(select.value) && !asset.files.includes(select.value);
+    });
+  };
+
 }
 
 customIdButton.addEventListener("click", async () => {
@@ -349,6 +373,7 @@ async function loadEnglishCustomIds() {
 englishIdButton.addEventListener("click", async () => {
   englishDialogMonth = compactMonth();
   englishIdRows.replaceChildren();
+  englishIdDialog.querySelector(".file-filter").hidden = true;
   englishIdSummary.textContent = "전달용 CSV에서 수정할 Custom ID를 확인하고 있습니다…";
   englishIdNotice.textContent = "";
   englishIdSave.disabled = true;
