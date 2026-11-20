@@ -298,7 +298,7 @@ async function runSettleStage(yearMonth: string, paths: MonthlyPaths, exchangeRa
 
   const englishAssets = await reviewEnglishCustomIds(yearMonth, paths.packageDir);
   if (englishAssets.length > 0) {
-    throw new Error(`[MonthlySettlement] 영문 Custom ID ${englishAssets.length}개 자산이 남아 있습니다. 4단계 영문 Custom ID 수정을 마친 뒤 5단계를 실행해 주세요.`);
+    throw new Error(`[MonthlySettlement] 영문 Custom ID ${englishAssets.length}개 항목이 남아 있습니다. 4단계 영문 Custom ID 수정을 마친 뒤 5단계를 실행해 주세요.`);
   }
 
   console.log("\n[MonthlySettlement] STAGE settle START");

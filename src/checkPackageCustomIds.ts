@@ -86,7 +86,7 @@ async function findCustomIdIssueRows(filePath: string, classifier: AssetClassifi
 async function run(): Promise<void> {
   const config = resolveExtractionConfig(parseCliArgs(process.argv.slice(2)));
   const englishAssets = await reviewEnglishCustomIds(config.yearMonth, config.outputDir);
-  console.log(`[CustomIdCheck] 영문 Custom ID 수정 대상 ${englishAssets.length}개 자산. reports_custom_id_${config.yearMonth}/custom_id_english_${config.yearMonth}.csv`);
+  console.log(`[CustomIdCheck] 영문 Custom ID 수정 대상 ${englishAssets.length}개 항목. reports_custom_id_${config.yearMonth}/custom_id_english_${config.yearMonth}.csv`);
   const outputDir = path.resolve(getMonthlyPaths(config.yearMonth).customIdDir);
   const outputPath = path.join(outputDir, customIdInputFileName(config.yearMonth));
 

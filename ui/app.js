@@ -67,7 +67,7 @@ function renderReadiness() {
   else if (blankRows > 0) setStatus("customId", `공란 ${blankRows}행 · 자산 ${warning.blankAssets}개`, "missing");
   else if (englishLoading) setStatus("customId", "영문 값 검사 중", "loading");
   else if (englishAssets === null) setStatus("customId", "영문 값 확인 필요", "waiting");
-  else if (englishAssets.length > 0) setStatus("customId", `영문 ${englishAssets.length}개 자산`, "missing");
+  else if (englishAssets.length > 0) setStatus("customId", `영문 ${englishAssets.length}개 항목`, "missing");
   else setStatus("customId", "입력 완료", "ready");
   if (!readiness.extract.ready || blankRows > 0 || englishAssets === null || englishAssets.length > 0) setStatus("settle", "4단계 완료 필요", "waiting");
   else if (readiness.settle.stale) setStatus("settle", "다시 계산 필요", "missing");
@@ -251,7 +251,7 @@ function renderCustomIdRows(assets, target = customIdRows, english = false) {
     const row = document.createElement("tr");
     const input = document.createElement("input");
     input.type = "text";
-    input.name = asset.assetId;
+    input.name = english ? asset.key : asset.assetId;
     input.autocomplete = "off";
     if (english) {
       input.inputMode = "numeric";
@@ -362,8 +362,8 @@ englishIdButton.addEventListener("click", async () => {
   }
   renderCustomIdRows(englishAssets, englishIdRows, true);
   englishIdSummary.textContent = englishAssets.length > 0
-    ? `${englishAssets.length}개 자산 · ${englishAssets.reduce((sum, asset) => sum + asset.rows, 0)}행이 수정 대상입니다.`
-    : "수정할 단일 영문 Custom ID가 없습니다. 공란인 값은 ‘공란 Custom ID 입력’에서 입력해 주세요.";
+    ? `${englishAssets.length}개 항목 · ${englishAssets.reduce((sum, asset) => sum + asset.rows, 0)}행이 수정 대상입니다.`
+    : "수정할 영문 Custom ID가 없습니다. 공란인 값은 ‘공란 Custom ID 입력’에서 입력해 주세요.";
   englishIdSave.disabled = englishAssets.length === 0;
   (englishIdRows.querySelector("input") ?? englishIdCancel).focus();
 });
